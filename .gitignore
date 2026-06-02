@@ -1,0 +1,2 @@
+# Generated Excel workbooks are binary artifacts and are intentionally not tracked.
+dist/*.xlsx
