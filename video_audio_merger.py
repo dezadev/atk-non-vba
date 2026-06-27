@@ -74,6 +74,18 @@ def probe_duration(path: Path) -> MediaInfo:
     return MediaInfo(duration=duration)
 
 
+def build_looped_input_args(video: Path, audio: Path, duration_mode: str) -> list[str]:
+    """Build FFmpeg input arguments with fast packet-level looping."""
+    args: list[str] = []
+    if duration_mode == "audio":
+        args.extend(["-stream_loop", "-1"])
+    args.extend(["-i", str(video)])
+    if duration_mode == "video":
+        args.extend(["-stream_loop", "-1"])
+    args.extend(["-i", str(audio)])
+    return args
+
+
 def format_duration(seconds: float | None) -> str:
     if seconds is None:
         return "durasi tidak terbaca"
@@ -128,7 +140,7 @@ class MergerApp:
         for value, text in (
             ("shortest", "Selesai di durasi terpendek (audio/video dipotong otomatis)"),
             ("video", "Ikuti durasi video (audio dipotong atau diulang sampai cukup)"),
-            ("audio", "Ikuti durasi audio (video dibekukan di frame terakhir bila audio lebih panjang)"),
+            ("audio", "Ikuti durasi audio (video di-loop bila audio lebih panjang)"),
         ):
             ttk.Radiobutton(options, text=text, variable=self.duration_mode, value=value).pack(anchor="w", pady=2)
 
@@ -229,10 +241,8 @@ class MergerApp:
         if not self.output_path.get().strip():
             raise ValueError("Lokasi output belum dipilih.")
 
-        command = [ffmpeg, "-y" if self.overwrite.get() else "-n", "-i", str(video)]
-        if self.duration_mode.get() == "video":
-            command.extend(["-stream_loop", "-1"])
-        command.extend(["-i", str(audio)])
+        command = [ffmpeg, "-y" if self.overwrite.get() else "-n"]
+        command.extend(build_looped_input_args(video, audio, self.duration_mode.get()))
 
         video_gain = self.video_volume.get() / 100
         audio_gain = self.audio_volume.get() / 100
@@ -246,15 +256,8 @@ class MergerApp:
         filters.append(f"{''.join(audio_inputs)}amix=inputs={len(audio_inputs)}:duration=longest:dropout_transition=0[aout]")
 
         command.extend(["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]", "-progress", "pipe:1", "-nostats"])
-        video_codec_options = ["-c:v", "copy"]
-        if self.duration_mode.get() == "shortest":
-            command.append("-shortest")
-        elif self.duration_mode.get() == "audio":
-            command.extend(["-vf", "tpad=stop_mode=clone:stop_duration=86400", "-shortest"])
-            video_codec_options = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
-        else:
-            command.append("-shortest")
-        command.extend([*video_codec_options, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)])
+        command.append("-shortest")
+        command.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)])
         return command, self._expected_duration(video, audio)
 
     def _expected_duration(self, video: Path, audio: Path) -> float | None:

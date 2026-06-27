@@ -80,8 +80,8 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
 - Menggabungkan video dan audio menggunakan FFmpeg.
 - Mode penyesuaian durasi:
   - **Durasi terpendek**: hasil berhenti saat audio atau video yang paling pendek selesai.
-  - **Ikuti durasi video**: audio baru dipotong atau diulang otomatis sampai durasi video cukup.
-  - **Ikuti durasi audio**: video dapat dibekukan di frame terakhir bila audio lebih panjang.
+  - **Ikuti durasi video**: audio baru dipotong atau di-loop otomatis sampai durasi video cukup.
+  - **Ikuti durasi audio**: video dipotong atau di-loop otomatis sampai durasi audio cukup.
 - Pengaturan volume audio asli video dan audio baru.
 - Tampilan desktop sederhana berbahasa Indonesia.
 - Progress bar saat proses berjalan dan popup notifikasi ketika proses selesai atau gagal.
@@ -115,4 +115,4 @@ Setelah aplikasi terbuka:
 
 ### Catatan Output
 
-Aplikasi memakai mode cepat dengan menyalin stream video (`-c:v copy`) untuk mode **Durasi terpendek** dan **Ikuti durasi video**, sehingga proses biasanya jauh lebih cepat karena video tidak di-encode ulang. Mode **Ikuti durasi audio** tetap perlu encode video dengan preset `ultrafast` karena aplikasi harus membekukan frame terakhir saat audio lebih panjang. Audio output di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
+Aplikasi memakai metode cepat dengan `-stream_loop` untuk looping audio/video dan menyalin stream video (`-c:v copy`) pada semua mode, sehingga video tidak di-encode ulang. Hanya audio output yang di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Mode **Ikuti durasi video** akan me-loop audio bila audio lebih pendek, sedangkan mode **Ikuti durasi audio** akan me-loop video bila video lebih pendek. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
