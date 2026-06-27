@@ -14,7 +14,7 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, IntVar, StringVar, Tk, filedialog, messagebox, ttk
+from tkinter import BooleanVar, DoubleVar, IntVar, StringVar, Tk, filedialog, messagebox, ttk
 from typing import Iterable
 
 APP_TITLE = "Penggabung Video & Audio (FFmpeg)"
@@ -102,6 +102,7 @@ class MergerApp:
         self.audio_volume = IntVar(value=100)
         self.overwrite = BooleanVar(value=True)
         self.status = StringVar(value="Pilih file video dan audio untuk mulai.")
+        self.progress = DoubleVar(value=0)
         self.log_queue: queue.Queue[str] = queue.Queue()
 
         self._build_ui()
@@ -147,11 +148,19 @@ class MergerApp:
         ttk.Button(buttons, text="Gabungkan Sekarang", command=self._start_merge).pack(side="left")
         ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
 
-        ttk.Label(main, textvariable=self.status).grid(row=8, column=0, columnspan=3, sticky="w")
+        progress_row = ttk.Frame(main)
+        progress_row.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        progress_row.columnconfigure(0, weight=1)
+        self.progress_bar = ttk.Progressbar(progress_row, variable=self.progress, maximum=100)
+        self.progress_bar.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        self.progress_label = ttk.Label(progress_row, text="0%")
+        self.progress_label.grid(row=0, column=1, sticky="e")
+
+        ttk.Label(main, textvariable=self.status).grid(row=9, column=0, columnspan=3, sticky="w")
         self.log = ttk.Treeview(main, columns=("pesan",), show="headings", height=6)
         self.log.heading("pesan", text="Log")
-        self.log.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
-        main.rowconfigure(9, weight=1)
+        self.log.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        main.rowconfigure(10, weight=1)
 
     def _file_row(self, parent: ttk.Frame, row: int, label: str, variable: StringVar, command) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)
@@ -193,15 +202,20 @@ class MergerApp:
 
     def _start_merge(self) -> None:
         try:
-            command = self._build_ffmpeg_command()
+            command, expected_duration = self._build_ffmpeg_command()
         except ValueError as exc:
             messagebox.showerror("Input belum lengkap", str(exc))
             return
+        self._set_progress(0)
+        self.progress_bar.configure(mode="determinate")
+        if expected_duration is None:
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start(10)
         self.status.set("Memproses... jangan tutup aplikasi.")
         self._add_log("Menjalankan FFmpeg...")
-        threading.Thread(target=self._run_merge, args=(command,), daemon=True).start()
+        threading.Thread(target=self._run_merge, args=(command, expected_duration), daemon=True).start()
 
-    def _build_ffmpeg_command(self) -> list[str]:
+    def _build_ffmpeg_command(self) -> tuple[list[str], float | None]:
         ffmpeg = find_tool("ffmpeg")
         if not ffmpeg:
             raise ValueError("FFmpeg tidak ditemukan di PATH.")
@@ -231,7 +245,7 @@ class MergerApp:
         audio_inputs.append("[anew]")
         filters.append(f"{''.join(audio_inputs)}amix=inputs={len(audio_inputs)}:duration=longest:dropout_transition=0[aout]")
 
-        command.extend(["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]"])
+        command.extend(["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]", "-progress", "pipe:1", "-nostats"])
         if self.duration_mode.get() == "shortest":
             command.append("-shortest")
         elif self.duration_mode.get() == "audio":
@@ -239,28 +253,79 @@ class MergerApp:
         else:
             command.append("-shortest")
         command.extend(["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart", str(output)])
-        return command
+        return command, self._expected_duration(video, audio)
 
-    def _run_merge(self, command: list[str]) -> None:
-        result = run_command(command)
-        if result.returncode == 0:
+    def _expected_duration(self, video: Path, audio: Path) -> float | None:
+        video_duration = probe_duration(video).duration
+        audio_duration = probe_duration(audio).duration
+        if self.duration_mode.get() == "video":
+            return video_duration
+        if self.duration_mode.get() == "audio":
+            return audio_duration
+        if video_duration is None or audio_duration is None:
+            return None
+        return min(video_duration, audio_duration)
+
+    def _run_merge(self, command: list[str], expected_duration: float | None) -> None:
+        startupinfo = None
+        if hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            startupinfo=startupinfo,
+        )
+        output_lines: list[str] = []
+        assert process.stdout is not None
+        for line in process.stdout:
+            stripped = line.strip()
+            self._handle_progress_line(stripped, expected_duration)
+            if not stripped.startswith(("frame=", "fps=", "out_time_ms=", "progress=")):
+                output_lines.append(stripped)
+        return_code = process.wait()
+        if return_code == 0:
+            self.log_queue.put("PROGRESS::100")
             self.log_queue.put("SELESAI::Berhasil membuat file output.")
         else:
-            error = (result.stderr or result.stdout or "FFmpeg gagal tanpa pesan.").strip().splitlines()[-1]
+            error = output_lines[-1] if output_lines else "FFmpeg gagal tanpa pesan."
             self.log_queue.put(f"GAGAL::{error}")
+
+    def _handle_progress_line(self, line: str, expected_duration: float | None) -> None:
+        if expected_duration is None or expected_duration <= 0 or not line.startswith("out_time_ms="):
+            return
+        try:
+            encoded_seconds = int(line.split("=", 1)[1]) / 1_000_000
+        except ValueError:
+            return
+        percent = min(99.0, max(0.0, encoded_seconds / expected_duration * 100))
+        self.log_queue.put(f"PROGRESS::{percent:.1f}")
 
     def _poll_log_queue(self) -> None:
         while not self.log_queue.empty():
             message = self.log_queue.get()
-            if message.startswith("SELESAI::"):
+            if message.startswith("PROGRESS::"):
+                self._set_progress(float(message.removeprefix("PROGRESS::")))
+            elif message.startswith("SELESAI::"):
+                self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
+                self._set_progress(100)
                 self.status.set(message.removeprefix("SELESAI::"))
                 self._add_log(self.status.get())
                 messagebox.showinfo("Selesai", self.status.get())
             elif message.startswith("GAGAL::"):
+                self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
                 self.status.set("Proses gagal. Lihat log.")
                 self._add_log(message.removeprefix("GAGAL::"))
                 messagebox.showerror("Gagal", self.log.item(self.log.get_children()[-1], "values")[0])
         self.root.after(200, self._poll_log_queue)
+
+    def _set_progress(self, percent: float) -> None:
+        self.progress.set(percent)
+        self.progress_label.configure(text=f"{percent:.0f}%")
 
     def _add_log(self, message: str) -> None:
         self.log.insert("", "end", values=(message,))

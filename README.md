@@ -84,6 +84,7 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
   - **Ikuti durasi audio**: video dapat dibekukan di frame terakhir bila audio lebih panjang.
 - Pengaturan volume audio asli video dan audio baru.
 - Tampilan desktop sederhana berbahasa Indonesia.
+- Progress bar saat proses berjalan dan popup notifikasi ketika proses selesai atau gagal.
 
 ### Prasyarat
 
@@ -110,7 +111,7 @@ Setelah aplikasi terbuka:
 3. Tentukan file **Output**.
 4. Pilih mode penyesuaian durasi.
 5. Atur volume jika diperlukan.
-6. Klik **Gabungkan Sekarang**.
+6. Klik **Gabungkan Sekarang** dan pantau progress bar sampai popup selesai muncul.
 
 ### Catatan Output
 
