@@ -11,11 +11,12 @@ import json
 import queue
 import shutil
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import BooleanVar, DoubleVar, IntVar, StringVar, Tk, filedialog, messagebox, ttk
-from typing import Iterable
+from typing import Iterable, Sequence
 
 APP_TITLE = "Penggabung Video & Audio (FFmpeg)"
 VIDEO_EXTENSIONS = (("Video", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Semua file", "*.*"))
@@ -74,16 +75,49 @@ def probe_duration(path: Path) -> MediaInfo:
     return MediaInfo(duration=duration)
 
 
-def build_looped_input_args(video: Path, audio: Path, duration_mode: str) -> list[str]:
+def write_concat_list(paths: Sequence[Path]) -> Path:
+    """Create a temporary FFmpeg concat-demuxer list for many media files."""
+    fd, name = tempfile.mkstemp(prefix="ffmpeg_concat_", suffix=".txt", text=True)
+    with open(fd, "w", encoding="utf-8") as file:
+        for path in paths:
+            safe_path = str(path.resolve()).replace("'", "'\\''")
+            file.write(f"file '{safe_path}'\n")
+    return Path(name)
+
+
+def media_input_args(path: Path, is_concat_list: bool) -> list[str]:
+    if not is_concat_list:
+        return ["-i", str(path)]
+    return ["-f", "concat", "-safe", "0", "-i", str(path)]
+
+
+def build_looped_input_args(
+    video_input: Path,
+    audio_input: Path,
+    duration_mode: str,
+    *,
+    video_is_concat_list: bool = False,
+    audio_is_concat_list: bool = False,
+) -> list[str]:
     """Build FFmpeg input arguments with fast packet-level looping."""
     args: list[str] = []
     if duration_mode == "audio":
         args.extend(["-stream_loop", "-1"])
-    args.extend(["-i", str(video)])
+    args.extend(media_input_args(video_input, video_is_concat_list))
     if duration_mode == "video":
         args.extend(["-stream_loop", "-1"])
-    args.extend(["-i", str(audio)])
+    args.extend(media_input_args(audio_input, audio_is_concat_list))
     return args
+
+
+def total_duration(paths: Sequence[Path]) -> float | None:
+    total = 0.0
+    for path in paths:
+        duration = probe_duration(path).duration
+        if duration is None:
+            return None
+        total += duration
+    return total
 
 
 def format_duration(seconds: float | None) -> str:
@@ -106,6 +140,8 @@ class MergerApp:
         self.root.geometry("760x520")
         self.root.minsize(700, 480)
 
+        self.video_files: list[Path] = []
+        self.audio_files: list[Path] = []
         self.video_path = StringVar()
         self.audio_path = StringVar()
         self.output_path = StringVar()
@@ -185,17 +221,19 @@ class MergerApp:
             self.status.set("FFmpeg belum ditemukan di PATH.")
 
     def _choose_video(self) -> None:
-        path = filedialog.askopenfilename(title="Pilih video", filetypes=VIDEO_EXTENSIONS)
-        if path:
-            self.video_path.set(path)
+        paths = filedialog.askopenfilenames(title="Pilih satu atau banyak video", filetypes=VIDEO_EXTENSIONS)
+        if paths:
+            self.video_files = [Path(path) for path in paths]
+            self.video_path.set(self._selection_label(self.video_files))
             self._suggest_output()
-            self._log_duration("Video", Path(path))
+            self._log_duration("Video", self.video_files)
 
     def _choose_audio(self) -> None:
-        path = filedialog.askopenfilename(title="Pilih audio", filetypes=AUDIO_EXTENSIONS)
-        if path:
-            self.audio_path.set(path)
-            self._log_duration("Audio", Path(path))
+        paths = filedialog.askopenfilenames(title="Pilih satu atau banyak audio", filetypes=AUDIO_EXTENSIONS)
+        if paths:
+            self.audio_files = [Path(path) for path in paths]
+            self.audio_path.set(self._selection_label(self.audio_files))
+            self._log_duration("Audio", self.audio_files)
 
     def _choose_output(self) -> None:
         path = filedialog.asksaveasfilename(title="Simpan hasil", defaultextension=".mp4", filetypes=OUTPUT_EXTENSIONS)
@@ -203,18 +241,23 @@ class MergerApp:
             self.output_path.set(path)
 
     def _suggest_output(self) -> None:
-        if self.output_path.get() or not self.video_path.get():
+        if self.output_path.get() or not self.video_files:
             return
-        video = Path(self.video_path.get())
+        video = self.video_files[0]
         self.output_path.set(str(video.with_name(f"{video.stem}_gabung_audio.mp4")))
 
-    def _log_duration(self, label: str, path: Path) -> None:
-        info = probe_duration(path)
-        self._add_log(f"{label}: {path.name} ({format_duration(info.duration)})")
+    def _selection_label(self, paths: Sequence[Path]) -> str:
+        if len(paths) == 1:
+            return str(paths[0])
+        return f"{len(paths)} file dipilih: {paths[0].name} ... {paths[-1].name}"
+
+    def _log_duration(self, label: str, paths: Sequence[Path]) -> None:
+        duration = total_duration(paths)
+        self._add_log(f"{label}: {len(paths)} file ({format_duration(duration)})")
 
     def _start_merge(self) -> None:
         try:
-            command, expected_duration = self._build_ffmpeg_command()
+            command, expected_duration, cleanup_paths = self._build_ffmpeg_command()
         except ValueError as exc:
             messagebox.showerror("Input belum lengkap", str(exc))
             return
@@ -225,24 +268,42 @@ class MergerApp:
             self.progress_bar.start(10)
         self.status.set("Memproses... jangan tutup aplikasi.")
         self._add_log("Menjalankan FFmpeg...")
-        threading.Thread(target=self._run_merge, args=(command, expected_duration), daemon=True).start()
+        threading.Thread(target=self._run_merge, args=(command, expected_duration, cleanup_paths), daemon=True).start()
 
-    def _build_ffmpeg_command(self) -> tuple[list[str], float | None]:
+    def _build_ffmpeg_command(self) -> tuple[list[str], float | None, list[Path]]:
         ffmpeg = find_tool("ffmpeg")
         if not ffmpeg:
             raise ValueError("FFmpeg tidak ditemukan di PATH.")
-        video = Path(self.video_path.get())
-        audio = Path(self.audio_path.get())
         output = Path(self.output_path.get())
-        if not video.is_file():
-            raise ValueError("File video belum dipilih atau tidak ditemukan.")
-        if not audio.is_file():
-            raise ValueError("File audio belum dipilih atau tidak ditemukan.")
+        if not self.video_files or any(not path.is_file() for path in self.video_files):
+            raise ValueError("File video belum dipilih atau ada yang tidak ditemukan.")
+        if not self.audio_files or any(not path.is_file() for path in self.audio_files):
+            raise ValueError("File audio belum dipilih atau ada yang tidak ditemukan.")
         if not self.output_path.get().strip():
             raise ValueError("Lokasi output belum dipilih.")
 
+        cleanup_paths: list[Path] = []
+        video_input = self.video_files[0]
+        audio_input = self.audio_files[0]
+        video_is_concat_list = len(self.video_files) > 1
+        audio_is_concat_list = len(self.audio_files) > 1
+        if video_is_concat_list:
+            video_input = write_concat_list(self.video_files)
+            cleanup_paths.append(video_input)
+        if audio_is_concat_list:
+            audio_input = write_concat_list(self.audio_files)
+            cleanup_paths.append(audio_input)
+
         command = [ffmpeg, "-y" if self.overwrite.get() else "-n"]
-        command.extend(build_looped_input_args(video, audio, self.duration_mode.get()))
+        command.extend(
+            build_looped_input_args(
+                video_input,
+                audio_input,
+                self.duration_mode.get(),
+                video_is_concat_list=video_is_concat_list,
+                audio_is_concat_list=audio_is_concat_list,
+            )
+        )
 
         video_gain = self.video_volume.get() / 100
         audio_gain = self.audio_volume.get() / 100
@@ -258,11 +319,11 @@ class MergerApp:
         command.extend(["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]", "-progress", "pipe:1", "-nostats"])
         command.append("-shortest")
         command.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)])
-        return command, self._expected_duration(video, audio)
+        return command, self._expected_duration(), cleanup_paths
 
-    def _expected_duration(self, video: Path, audio: Path) -> float | None:
-        video_duration = probe_duration(video).duration
-        audio_duration = probe_duration(audio).duration
+    def _expected_duration(self) -> float | None:
+        video_duration = total_duration(self.video_files)
+        audio_duration = total_duration(self.audio_files)
         if self.duration_mode.get() == "video":
             return video_duration
         if self.duration_mode.get() == "audio":
@@ -271,26 +332,31 @@ class MergerApp:
             return None
         return min(video_duration, audio_duration)
 
-    def _run_merge(self, command: list[str], expected_duration: float | None) -> None:
+    def _run_merge(self, command: list[str], expected_duration: float | None, cleanup_paths: Sequence[Path]) -> None:
         startupinfo = None
         if hasattr(subprocess, "STARTUPINFO"):
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            startupinfo=startupinfo,
-        )
+        return_code = 1
         output_lines: list[str] = []
-        assert process.stdout is not None
-        for line in process.stdout:
-            stripped = line.strip()
-            self._handle_progress_line(stripped, expected_duration)
-            if not stripped.startswith(("frame=", "fps=", "out_time_ms=", "progress=")):
-                output_lines.append(stripped)
-        return_code = process.wait()
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                startupinfo=startupinfo,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                stripped = line.strip()
+                self._handle_progress_line(stripped, expected_duration)
+                if not stripped.startswith(("frame=", "fps=", "out_time_ms=", "progress=")):
+                    output_lines.append(stripped)
+            return_code = process.wait()
+        finally:
+            for path in cleanup_paths:
+                path.unlink(missing_ok=True)
         if return_code == 0:
             self.log_queue.put("PROGRESS::100")
             self.log_queue.put("SELESAI::Berhasil membuat file output.")

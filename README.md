@@ -76,8 +76,8 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
 
 ### Fitur
 
-- Memilih file video, file audio, dan lokasi output melalui dialog file.
-- Menggabungkan video dan audio menggunakan FFmpeg.
+- Memilih satu atau banyak file video, satu atau banyak file audio, dan lokasi output melalui dialog file.
+- Menggabungkan banyak video secara berurutan dan banyak audio secara berurutan menggunakan FFmpeg.
 - Mode penyesuaian durasi:
   - **Durasi terpendek**: hasil berhenti saat audio atau video yang paling pendek selesai.
   - **Ikuti durasi video**: audio baru dipotong atau di-loop otomatis sampai durasi video cukup.
@@ -106,8 +106,8 @@ python video_audio_merger.py
 
 Setelah aplikasi terbuka:
 
-1. Klik **Pilih...** pada baris **Video**.
-2. Klik **Pilih...** pada baris **Audio**.
+1. Klik **Pilih...** pada baris **Video** lalu pilih satu atau banyak file video.
+2. Klik **Pilih...** pada baris **Audio** lalu pilih satu atau banyak file audio.
 3. Tentukan file **Output**.
 4. Pilih mode penyesuaian durasi.
 5. Atur volume jika diperlukan.
@@ -115,4 +115,4 @@ Setelah aplikasi terbuka:
 
 ### Catatan Output
 
-Aplikasi memakai metode cepat dengan `-stream_loop` untuk looping audio/video dan menyalin stream video (`-c:v copy`) pada semua mode, sehingga video tidak di-encode ulang. Hanya audio output yang di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Mode **Ikuti durasi video** akan me-loop audio bila audio lebih pendek, sedangkan mode **Ikuti durasi audio** akan me-loop video bila video lebih pendek. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
+Aplikasi memakai metode cepat dengan concat demuxer untuk banyak file, `-stream_loop` untuk looping audio/video, dan menyalin stream video (`-c:v copy`) pada semua mode, sehingga video tidak di-encode ulang. Hanya audio output yang di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Mode **Ikuti durasi video** akan me-loop audio bila audio lebih pendek, sedangkan mode **Ikuti durasi audio** akan me-loop video bila video lebih pendek. Agar mode super cepat tetap stabil, gunakan file video dalam urutan dengan codec/resolusi yang kompatibel. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
