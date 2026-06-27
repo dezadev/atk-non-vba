@@ -246,13 +246,15 @@ class MergerApp:
         filters.append(f"{''.join(audio_inputs)}amix=inputs={len(audio_inputs)}:duration=longest:dropout_transition=0[aout]")
 
         command.extend(["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]", "-progress", "pipe:1", "-nostats"])
+        video_codec_options = ["-c:v", "copy"]
         if self.duration_mode.get() == "shortest":
             command.append("-shortest")
         elif self.duration_mode.get() == "audio":
             command.extend(["-vf", "tpad=stop_mode=clone:stop_duration=86400", "-shortest"])
+            video_codec_options = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
         else:
             command.append("-shortest")
-        command.extend(["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart", str(output)])
+        command.extend([*video_codec_options, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)])
         return command, self._expected_duration(video, audio)
 
     def _expected_duration(self, video: Path, audio: Path) -> float | None:

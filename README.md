@@ -115,4 +115,4 @@ Setelah aplikasi terbuka:
 
 ### Catatan Output
 
-Aplikasi melakukan encoding video ke `libx264` dan audio ke `aac` agar output MP4 lebih kompatibel dengan banyak pemutar video. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
+Aplikasi memakai mode cepat dengan menyalin stream video (`-c:v copy`) untuk mode **Durasi terpendek** dan **Ikuti durasi video**, sehingga proses biasanya jauh lebih cepat karena video tidak di-encode ulang. Mode **Ikuti durasi audio** tetap perlu encode video dengan preset `ultrafast` karena aplikasi harus membekukan frame terakhir saat audio lebih panjang. Audio output di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
