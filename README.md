@@ -69,3 +69,49 @@ unzip -t dist/Sistem_Manajemen_Usaha_Fotokopi_ATK_No_VBA.xlsx
 ```
 
 Generator hanya menggunakan Python standard library dan menghasilkan file `.xlsx` biasa tanpa komponen macro/VBA.
+
+## Aplikasi Desktop Penggabung Video & Audio
+
+Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.14**, **Tkinter**, dan **FFmpeg** untuk menggabungkan satu file video dengan satu file audio.
+
+### Fitur
+
+- Memilih file video, file audio, dan lokasi output melalui dialog file.
+- Menggabungkan video dan audio menggunakan FFmpeg.
+- Mode penyesuaian durasi:
+  - **Durasi terpendek**: hasil berhenti saat audio atau video yang paling pendek selesai.
+  - **Ikuti durasi video**: audio baru dipotong atau diulang otomatis sampai durasi video cukup.
+  - **Ikuti durasi audio**: video dapat dibekukan di frame terakhir bila audio lebih panjang.
+- Pengaturan volume audio asli video dan audio baru.
+- Tampilan desktop sederhana berbahasa Indonesia.
+
+### Prasyarat
+
+1. Install Python 3.14 atau versi lebih baru.
+2. Install FFmpeg dan pastikan perintah berikut bisa dijalankan dari terminal:
+
+```bash
+ffmpeg -version
+ffprobe -version
+```
+
+`ffprobe` digunakan untuk membaca durasi media. Aplikasi tetap bisa berjalan tanpa `ffprobe`, tetapi informasi durasi tidak akan tampil.
+
+### Cara Menjalankan
+
+```bash
+python video_audio_merger.py
+```
+
+Setelah aplikasi terbuka:
+
+1. Klik **Pilih...** pada baris **Video**.
+2. Klik **Pilih...** pada baris **Audio**.
+3. Tentukan file **Output**.
+4. Pilih mode penyesuaian durasi.
+5. Atur volume jika diperlukan.
+6. Klik **Gabungkan Sekarang**.
+
+### Catatan Output
+
+Aplikasi melakukan encoding video ke `libx264` dan audio ke `aac` agar output MP4 lebih kompatibel dengan banyak pemutar video. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
