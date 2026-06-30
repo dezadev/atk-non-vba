@@ -20,7 +20,7 @@ File `.xlsx` adalah file biner. Agar PR tetap dapat direview sebagai teks dan ti
 - `README.md` sebagai dokumentasi penggunaan dan struktur workbook.
 - `.gitignore` untuk mencegah file hasil generate `.xlsx` ikut ter-commit.
 
-## Isi Workbook yang Digenerate
+## Isi Workbook yang Dihasilkan
 
 | Area | Sheet / Tabel | Fungsi Utama |
 | --- | --- | --- |
