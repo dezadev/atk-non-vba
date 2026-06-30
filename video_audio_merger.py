@@ -132,7 +132,7 @@ def format_duration(seconds: float | None) -> str:
 
 
 class MergerApp:
-    """Tkinter UI for combining one video file and one audio file."""
+    """Tkinter UI for combining selected video files with selected audio files."""
 
     def __init__(self, root: Tk) -> None:
         self.root = root
@@ -274,13 +274,17 @@ class MergerApp:
         ffmpeg = find_tool("ffmpeg")
         if not ffmpeg:
             raise ValueError("FFmpeg tidak ditemukan di PATH.")
-        output = Path(self.output_path.get())
+        output_name = self.output_path.get().strip()
+        if not output_name:
+            raise ValueError("Lokasi output belum dipilih.")
+        output = Path(output_name)
+        output_parent = output.expanduser().resolve().parent
+        if not output_parent.is_dir():
+            raise ValueError(f"Folder output tidak ditemukan: {output_parent}")
         if not self.video_files or any(not path.is_file() for path in self.video_files):
             raise ValueError("File video belum dipilih atau ada yang tidak ditemukan.")
         if not self.audio_files or any(not path.is_file() for path in self.audio_files):
             raise ValueError("File audio belum dipilih atau ada yang tidak ditemukan.")
-        if not self.output_path.get().strip():
-            raise ValueError("Lokasi output belum dipilih.")
 
         cleanup_paths: list[Path] = []
         video_input = self.video_files[0]
