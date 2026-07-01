@@ -4,8 +4,8 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
 
 ### Fitur
 
-- Memilih satu atau banyak file video, satu atau banyak file audio, dan lokasi output melalui dialog file.
-- Menggabungkan banyak video secara berurutan dan banyak audio secara berurutan menggunakan FFmpeg.
+- Mengelola daftar file video dan audio melalui list yang dapat ditambah, dipilih beberapa itemnya, dihapus, dan diacak urutannya.
+- Menggabungkan banyak video secara berurutan dan banyak audio secara berurutan menggunakan FFmpeg, termasuk opsi acak agar hasil setiap proses bisa berbeda.
 - Mode penyesuaian durasi:
   - **Durasi terpendek**: hasil berhenti saat audio atau video yang paling pendek selesai.
   - **Ikuti durasi video**: audio baru dipotong atau di-loop otomatis sampai durasi video cukup.
@@ -13,7 +13,7 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
 - Pengaturan volume audio asli video dan audio baru.
 - Tampilan desktop sederhana berbahasa Indonesia.
 - Progress bar saat proses berjalan dan popup notifikasi ketika proses selesai atau gagal.
-- Download playlist YouTube melalui tab **Download YouTube** menggunakan `yt-dlp`.
+- Download playlist YouTube melalui tab **Download YouTube** menggunakan `yt-dlp`, lengkap dengan list antrian download dan list item yang sudah terdownload.
 - Pilihan download playlist sebagai video MP4 terbaik atau audio MP3 saja.
 
 ### Prasyarat
@@ -42,12 +42,24 @@ python video_audio_merger.py
 
 Setelah aplikasi terbuka, gunakan tab **Gabung Media** untuk menggabungkan file lokal:
 
-1. Klik **Pilih...** pada baris **Video** lalu pilih satu atau banyak file video.
-2. Klik **Pilih...** pada baris **Audio** lalu pilih satu atau banyak file audio.
-3. Tentukan file **Output**.
-4. Pilih mode penyesuaian durasi.
-5. Atur volume jika diperlukan.
-6. Klik **Gabungkan Sekarang** dan pantau progress bar sampai popup selesai muncul.
+1. Klik **Tambah** pada panel **Daftar Video** lalu pilih satu atau banyak file video.
+2. Klik **Tambah** pada panel **Daftar Audio** lalu pilih satu atau banyak file audio.
+3. Gunakan **Hapus Terpilih** untuk menghapus beberapa item yang dipilih dari masing-masing list.
+4. Gunakan **Acak** pada salah satu list atau **Acak Semua** untuk mengubah urutan video/audio sebelum proses gabung.
+5. Tentukan file **Output**.
+6. Pilih mode penyesuaian durasi.
+7. Atur volume jika diperlukan.
+8. Klik **Gabungkan Sekarang** dan pantau progress bar sampai popup selesai muncul.
+
+Gunakan tab **Download YouTube** untuk mengunduh playlist:
+
+1. Tempel URL playlist YouTube pada kolom **URL Playlist**.
+2. Klik **Tambah ke Antrian** untuk memasukkan URL ke list **Antrian Download**.
+3. Ulangi langkah sebelumnya jika ingin menambahkan beberapa playlist.
+4. Pilih folder download lokal.
+5. Pilih format **Video MP4 terbaik** atau **Audio MP3 saja**.
+6. Klik **Download Antrian** dan pantau log/progress sampai popup selesai muncul.
+7. Playlist yang selesai diproses akan dipindahkan ke list **Sudah Terdownload**.
 
 Gunakan tab **Download YouTube** untuk mengunduh playlist:
 

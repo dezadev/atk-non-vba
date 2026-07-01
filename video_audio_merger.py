@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 import queue
+import random
 import shutil
 import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, DoubleVar, IntVar, StringVar, Tk, filedialog, messagebox, ttk
+from tkinter import END, EXTENDED, BooleanVar, DoubleVar, IntVar, Listbox, StringVar, Tk, filedialog, messagebox, ttk
 from typing import Iterable, Sequence
 
 APP_TITLE = "Toolkit Video & Audio (FFmpeg + yt-dlp)"
@@ -169,14 +170,18 @@ class MergerApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("760x520")
-        self.root.minsize(700, 480)
+        self.root.geometry("900x680")
+        self.root.minsize(640, 460)
 
         self.video_files: list[Path] = []
         self.audio_files: list[Path] = []
         self.video_path = StringVar()
         self.audio_path = StringVar()
         self.output_path = StringVar()
+        self.video_list: Listbox | None = None
+        self.audio_list: Listbox | None = None
+        self.download_queue_list: Listbox | None = None
+        self.downloaded_list: Listbox | None = None
         self.playlist_url = StringVar()
         self.download_dir = StringVar(value=str(Path.home() / "Downloads"))
         self.download_format = StringVar(value="video")
@@ -193,35 +198,49 @@ class MergerApp:
         self._check_tools()
 
     def _build_ui(self) -> None:
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill="both", expand=True)
+        self.root.rowconfigure(0, weight=3)
+        self.root.rowconfigure(1, weight=2)
+        self.root.columnconfigure(0, weight=1)
 
-        merge_tab = ttk.Frame(notebook, padding=18)
-        download_tab = ttk.Frame(notebook, padding=18)
+        notebook = ttk.Notebook(self.root)
+        notebook.grid(row=0, column=0, sticky="nsew")
+
+        merge_tab = ttk.Frame(notebook, padding=12)
+        download_tab = ttk.Frame(notebook, padding=12)
         notebook.add(merge_tab, text="Gabung Media")
         notebook.add(download_tab, text="Download YouTube")
 
         self._build_merge_tab(merge_tab)
         self._build_download_tab(download_tab)
 
-        status_frame = ttk.Frame(self.root, padding=(18, 0, 18, 18))
-        status_frame.pack(fill="both", expand=True)
+        status_frame = ttk.Frame(self.root, padding=(12, 0, 12, 12))
+        status_frame.grid(row=1, column=0, sticky="nsew")
         self._build_progress_and_log(status_frame, start_row=0)
 
     def _build_merge_tab(self, main: ttk.Frame) -> None:
+        main.columnconfigure(0, weight=1)
         main.columnconfigure(1, weight=1)
+        main.rowconfigure(2, weight=1)
 
         title = ttk.Label(main, text="Penggabung Video & Audio", font=("Segoe UI", 16, "bold"))
-        title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        subtitle = ttk.Label(main, text="Gabungkan video dan audio, lalu pilih cara menyesuaikan durasi hasil.")
-        subtitle.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
+        title.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        subtitle = ttk.Label(main, text="Kelola daftar video/audio, acak urutan bila perlu, lalu gabungkan.")
+        subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
-        self._file_row(main, 2, "Video", self.video_path, self._choose_video)
-        self._file_row(main, 3, "Audio", self.audio_path, self._choose_audio)
-        self._file_row(main, 4, "Output", self.output_path, self._choose_output)
+        self.video_list = self._media_list_panel(
+            main, 2, 0, "Daftar Video", self._add_video_files, self._remove_selected_videos, self._shuffle_videos
+        )
+        self.audio_list = self._media_list_panel(
+            main, 2, 1, "Daftar Audio", self._add_audio_files, self._remove_selected_audios, self._shuffle_audios
+        )
 
-        options = ttk.LabelFrame(main, text="Penyesuaian durasi", padding=12)
-        options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 8))
+        output_row = ttk.Frame(main)
+        output_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 4))
+        output_row.columnconfigure(1, weight=1)
+        self._file_row(output_row, 0, "Output", self.output_path, self._choose_output)
+
+        options = ttk.LabelFrame(main, text="Penyesuaian durasi", padding=10)
+        options.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 6))
         for value, text in (
             ("shortest", "Selesai di durasi terpendek (audio/video dipotong otomatis)"),
             ("video", "Ikuti durasi video (audio dipotong atau diulang sampai cukup)"),
@@ -229,8 +248,8 @@ class MergerApp:
         ):
             ttk.Radiobutton(options, text=text, variable=self.duration_mode, value=value).pack(anchor="w", pady=2)
 
-        mix = ttk.LabelFrame(main, text="Volume", padding=12)
-        mix.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(6, 8))
+        mix = ttk.LabelFrame(main, text="Volume", padding=10)
+        mix.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 8))
         mix.columnconfigure(1, weight=1)
         ttk.Label(mix, text="Audio asli video").grid(row=0, column=0, sticky="w")
         ttk.Scale(mix, from_=0, to=100, variable=self.video_volume).grid(row=0, column=1, sticky="ew", padx=10)
@@ -241,30 +260,82 @@ class MergerApp:
         ttk.Checkbutton(mix, text="Timpa file output jika sudah ada", variable=self.overwrite).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(main)
-        buttons.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(8, 8))
+        buttons.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         ttk.Button(buttons, text="Gabungkan Sekarang", command=self._start_merge).pack(side="left")
+        ttk.Button(buttons, text="Acak Semua", command=self._shuffle_all_media).pack(side="left", padx=8)
         ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
 
     def _build_download_tab(self, main: ttk.Frame) -> None:
+        main.columnconfigure(0, weight=1)
         main.columnconfigure(1, weight=1)
+        main.rowconfigure(5, weight=1)
+
         title = ttk.Label(main, text="YouTube Playlist Downloader", font=("Segoe UI", 16, "bold"))
-        title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        subtitle = ttk.Label(main, text="Download seluruh playlist YouTube dengan yt-dlp ke folder lokal.")
-        subtitle.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
+        title.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        subtitle = ttk.Label(main, text="Tambahkan URL ke antrian, lalu download sebagai video MP4 atau audio MP3.")
+        subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
-        ttk.Label(main, text="URL Playlist").grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Entry(main, textvariable=self.playlist_url).grid(row=2, column=1, columnspan=2, sticky="ew", padx=8, pady=4)
-        self._file_row(main, 3, "Folder", self.download_dir, self._choose_download_dir)
+        url_row = ttk.Frame(main)
+        url_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
+        url_row.columnconfigure(1, weight=1)
+        ttk.Label(url_row, text="URL Playlist").grid(row=0, column=0, sticky="w")
+        ttk.Entry(url_row, textvariable=self.playlist_url).grid(row=0, column=1, sticky="ew", padx=8)
+        ttk.Button(url_row, text="Tambah ke Antrian", command=self._add_download_queue_item).grid(row=0, column=2)
 
-        format_box = ttk.LabelFrame(main, text="Format download", padding=12)
-        format_box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 8))
-        ttk.Radiobutton(format_box, text="Video MP4 terbaik", variable=self.download_format, value="video").pack(anchor="w", pady=2)
-        ttk.Radiobutton(format_box, text="Audio MP3 saja", variable=self.download_format, value="audio").pack(anchor="w", pady=2)
+        folder_row = ttk.Frame(main)
+        folder_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=4)
+        folder_row.columnconfigure(1, weight=1)
+        self._file_row(folder_row, 0, "Folder", self.download_dir, self._choose_download_dir)
+
+        format_box = ttk.LabelFrame(main, text="Format download", padding=10)
+        format_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 8))
+        ttk.Radiobutton(format_box, text="Video MP4 terbaik", variable=self.download_format, value="video").pack(side="left", padx=(0, 14))
+        ttk.Radiobutton(format_box, text="Audio MP3 saja", variable=self.download_format, value="audio").pack(side="left")
+
+        self.download_queue_list = self._download_list_panel(
+            main, 5, 0, "Antrian Download", self._remove_download_queue_items
+        )
+        self.downloaded_list = self._download_list_panel(main, 5, 1, "Sudah Terdownload", None)
 
         buttons = ttk.Frame(main)
-        buttons.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 8))
-        ttk.Button(buttons, text="Download Playlist", command=self._start_playlist_download).pack(side="left")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(buttons, text="Download Antrian", command=self._start_playlist_download).pack(side="left")
         ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
+
+    def _media_list_panel(self, parent: ttk.Frame, row: int, column: int, title: str, add_command, remove_command, shuffle_command) -> Listbox:
+        frame = ttk.LabelFrame(parent, text=title, padding=8)
+        frame.grid(row=row, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=7)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=scrollbar.set)
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(buttons, text="Tambah", command=add_command).pack(side="left")
+        ttk.Button(buttons, text="Hapus Terpilih", command=remove_command).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Acak", command=shuffle_command).pack(side="left")
+        return listbox
+
+    def _download_list_panel(self, parent: ttk.Frame, row: int, column: int, title: str, remove_command) -> Listbox:
+        frame = ttk.LabelFrame(parent, text=title, padding=8)
+        frame.grid(row=row, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=8)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=scrollbar.set)
+
+        if remove_command is not None:
+            ttk.Button(frame, text="Hapus Terpilih", command=remove_command).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        return listbox
 
     def _build_progress_and_log(self, main: ttk.Frame, start_row: int) -> None:
         progress_row = ttk.Frame(main)
@@ -298,19 +369,68 @@ class MergerApp:
             self.status.set(f"Tool belum ditemukan di PATH: {tools}.")
 
     def _choose_video(self) -> None:
-        paths = filedialog.askopenfilenames(title="Pilih satu atau banyak video", filetypes=VIDEO_EXTENSIONS)
+        self._add_video_files()
+
+    def _choose_audio(self) -> None:
+        self._add_audio_files()
+
+    def _add_video_files(self) -> None:
+        paths = filedialog.askopenfilenames(title="Tambah satu atau banyak video", filetypes=VIDEO_EXTENSIONS)
         if paths:
-            self.video_files = [Path(path) for path in paths]
-            self.video_path.set(self._selection_label(self.video_files))
+            self.video_files.extend(Path(path) for path in paths)
+            self._refresh_media_lists()
             self._suggest_output()
             self._log_duration("Video", self.video_files)
 
-    def _choose_audio(self) -> None:
-        paths = filedialog.askopenfilenames(title="Pilih satu atau banyak audio", filetypes=AUDIO_EXTENSIONS)
+    def _add_audio_files(self) -> None:
+        paths = filedialog.askopenfilenames(title="Tambah satu atau banyak audio", filetypes=AUDIO_EXTENSIONS)
         if paths:
-            self.audio_files = [Path(path) for path in paths]
-            self.audio_path.set(self._selection_label(self.audio_files))
+            self.audio_files.extend(Path(path) for path in paths)
+            self._refresh_media_lists()
             self._log_duration("Audio", self.audio_files)
+
+    def _remove_selected_videos(self) -> None:
+        self.video_files = self._remove_selected_paths(self.video_files, self.video_list)
+        self._refresh_media_lists()
+
+    def _remove_selected_audios(self) -> None:
+        self.audio_files = self._remove_selected_paths(self.audio_files, self.audio_list)
+        self._refresh_media_lists()
+
+    def _remove_selected_paths(self, paths: list[Path], listbox: Listbox | None) -> list[Path]:
+        if listbox is None:
+            return paths
+        selected = set(listbox.curselection())
+        return [path for index, path in enumerate(paths) if index not in selected]
+
+    def _shuffle_videos(self) -> None:
+        random.shuffle(self.video_files)
+        self._refresh_media_lists()
+        self._add_log("Urutan video diacak.")
+
+    def _shuffle_audios(self) -> None:
+        random.shuffle(self.audio_files)
+        self._refresh_media_lists()
+        self._add_log("Urutan audio diacak.")
+
+    def _shuffle_all_media(self) -> None:
+        random.shuffle(self.video_files)
+        random.shuffle(self.audio_files)
+        self._refresh_media_lists()
+        self._add_log("Urutan video dan audio diacak.")
+
+    def _refresh_media_lists(self) -> None:
+        self._refresh_path_list(self.video_list, self.video_files)
+        self._refresh_path_list(self.audio_list, self.audio_files)
+        self.video_path.set(self._selection_label(self.video_files) if self.video_files else "")
+        self.audio_path.set(self._selection_label(self.audio_files) if self.audio_files else "")
+
+    def _refresh_path_list(self, listbox: Listbox | None, paths: Sequence[Path]) -> None:
+        if listbox is None:
+            return
+        listbox.delete(0, END)
+        for index, path in enumerate(paths, start=1):
+            listbox.insert(END, f"{index}. {path}")
 
     def _choose_output(self) -> None:
         path = filedialog.asksaveasfilename(title="Simpan hasil", defaultextension=".mp4", filetypes=OUTPUT_EXTENSIONS)
@@ -321,6 +441,26 @@ class MergerApp:
         path = filedialog.askdirectory(title="Pilih folder download")
         if path:
             self.download_dir.set(path)
+
+    def _add_download_queue_item(self) -> None:
+        url = self.playlist_url.get().strip()
+        if not url:
+            messagebox.showerror("URL kosong", "Isi URL playlist YouTube terlebih dahulu.")
+            return
+        if self.download_queue_list is not None:
+            self.download_queue_list.insert(END, url)
+        self.playlist_url.set("")
+
+    def _remove_download_queue_items(self) -> None:
+        if self.download_queue_list is None:
+            return
+        for index in reversed(self.download_queue_list.curselection()):
+            self.download_queue_list.delete(index)
+
+    def _queued_download_urls(self) -> list[str]:
+        if self.download_queue_list is None:
+            return []
+        return [self.download_queue_list.get(index) for index in range(self.download_queue_list.size())]
 
     def _suggest_output(self) -> None:
         if self.output_path.get() or not self.video_files:
@@ -354,27 +494,30 @@ class MergerApp:
 
     def _start_playlist_download(self) -> None:
         try:
-            command = self._build_playlist_download_command()
+            commands = self._build_playlist_download_commands()
         except ValueError as exc:
             messagebox.showerror("Input download belum lengkap", str(exc))
             return
         self._set_progress(0)
         self.progress_bar.configure(mode="indeterminate")
         self.progress_bar.start(10)
-        self.status.set("Mengunduh playlist... jangan tutup aplikasi.")
-        self._add_log("Menjalankan yt-dlp...")
-        threading.Thread(target=self._run_playlist_download, args=(command,), daemon=True).start()
+        self.status.set("Mengunduh antrian playlist... jangan tutup aplikasi.")
+        self._add_log("Menjalankan yt-dlp untuk antrian download...")
+        threading.Thread(target=self._run_playlist_downloads, args=(commands,), daemon=True).start()
 
-    def _build_playlist_download_command(self) -> list[str]:
+    def _build_playlist_download_commands(self) -> list[tuple[str, list[str]]]:
         yt_dlp = find_tool("yt-dlp")
         if not yt_dlp:
             raise ValueError("yt-dlp tidak ditemukan di PATH.")
-        return build_youtube_playlist_command(
-            yt_dlp,
-            self.playlist_url.get(),
-            Path(self.download_dir.get()),
-            self.download_format.get(),
-        )
+        urls = self._queued_download_urls() or [self.playlist_url.get().strip()]
+        commands = []
+        for url in urls:
+            commands.append((url, build_youtube_playlist_command(yt_dlp, url, Path(self.download_dir.get()), self.download_format.get())))
+        return commands
+
+    def _build_playlist_download_command(self) -> list[str]:
+        commands = self._build_playlist_download_commands()
+        return commands[0][1]
 
     def _build_ffmpeg_command(self) -> tuple[list[str], float | None, list[Path]]:
         ffmpeg = find_tool("ffmpeg")
@@ -474,7 +617,15 @@ class MergerApp:
             error = output_lines[-1] if output_lines else "FFmpeg gagal tanpa pesan."
             self.log_queue.put(f"GAGAL::{error}")
 
-    def _run_playlist_download(self, command: list[str]) -> None:
+    def _run_playlist_downloads(self, commands: Sequence[tuple[str, list[str]]]) -> None:
+        for url, command in commands:
+            ok = self._run_playlist_download(url, command)
+            if not ok:
+                return
+        self.log_queue.put("PROGRESS::100")
+        self.log_queue.put("SELESAI::Antrian playlist berhasil diunduh.")
+
+    def _run_playlist_download(self, url: str, command: list[str]) -> bool:
         startupinfo = None
         if hasattr(subprocess, "STARTUPINFO"):
             startupinfo = subprocess.STARTUPINFO()
@@ -496,11 +647,11 @@ class MergerApp:
                 output_lines.append(stripped)
         return_code = process.wait()
         if return_code == 0:
-            self.log_queue.put("PROGRESS::100")
-            self.log_queue.put("SELESAI::Playlist berhasil diunduh.")
-        else:
-            error = output_lines[-1] if output_lines else "yt-dlp gagal tanpa pesan."
-            self.log_queue.put(f"GAGAL::{error}")
+            self.log_queue.put(f"DOWNLOAD_DONE::{url}")
+            return True
+        error = output_lines[-1] if output_lines else "yt-dlp gagal tanpa pesan."
+        self.log_queue.put(f"GAGAL::{error}")
+        return False
 
     def _handle_download_line(self, line: str) -> None:
         if line.startswith("download:"):
@@ -529,6 +680,8 @@ class MergerApp:
                 self._set_progress(float(message.removeprefix("PROGRESS::")))
             elif message.startswith("LOG::"):
                 self._add_log(message.removeprefix("LOG::"))
+            elif message.startswith("DOWNLOAD_DONE::"):
+                self._mark_download_done(message.removeprefix("DOWNLOAD_DONE::"))
             elif message.startswith("SELESAI::"):
                 self.progress_bar.stop()
                 self.progress_bar.configure(mode="determinate")
@@ -543,6 +696,16 @@ class MergerApp:
                 self._add_log(message.removeprefix("GAGAL::"))
                 messagebox.showerror("Gagal", self.log.item(self.log.get_children()[-1], "values")[0])
         self.root.after(200, self._poll_log_queue)
+
+    def _mark_download_done(self, url: str) -> None:
+        if self.downloaded_list is not None:
+            self.downloaded_list.insert(END, f"{self.download_format.get().upper()} - {url}")
+        if self.download_queue_list is not None:
+            for index in range(self.download_queue_list.size()):
+                if self.download_queue_list.get(index) == url:
+                    self.download_queue_list.delete(index)
+                    break
+        self._add_log(f"Selesai download: {url}")
 
     def _set_progress(self, percent: float) -> None:
         self.progress.set(percent)

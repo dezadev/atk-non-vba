@@ -13,6 +13,17 @@ class FakeVar:
         return self.value
 
 
+class FakeListbox:
+    def __init__(self, values):
+        self.values = list(values)
+
+    def size(self):
+        return len(self.values)
+
+    def get(self, index):
+        return self.values[index]
+
+
 class VideoAudioMergerTests(TestCase):
     def test_format_duration_includes_hours_only_when_needed(self):
         self.assertEqual(merger.format_duration(None), "durasi tidak terbaca")
@@ -114,3 +125,21 @@ class VideoAudioMergerTests(TestCase):
             merger.build_youtube_playlist_command(
                 "yt-dlp", "https://example.test", Path("missing-dir"), "video"
             )
+    def test_build_playlist_download_commands_uses_queued_urls(self):
+        app = merger.MergerApp.__new__(merger.MergerApp)
+        app.download_queue_list = FakeListbox([
+            "https://www.youtube.com/playlist?list=one",
+            "https://www.youtube.com/playlist?list=two",
+        ])
+        app.playlist_url = FakeVar("https://www.youtube.com/playlist?list=ignored")
+        app.download_dir = FakeVar(".")
+        app.download_format = FakeVar("audio")
+
+        with patch.object(merger, "find_tool", return_value="yt-dlp"):
+            commands = app._build_playlist_download_commands()
+
+        self.assertEqual([url for url, _ in commands], [
+            "https://www.youtube.com/playlist?list=one",
+            "https://www.youtube.com/playlist?list=two",
+        ])
+        self.assertTrue(all("--audio-format" in command for _, command in commands))
