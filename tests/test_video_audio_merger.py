@@ -1,5 +1,4 @@
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -69,5 +68,49 @@ class VideoAudioMergerTests(TestCase):
         self.assertEqual(expected_duration, 12.5)
         self.assertEqual(cleanup_paths, [])
         self.assertIn("-n", command)
-        self.assertIn("[0:a]volume=0.25[vold];[1:a]volume=0.80[anew];[vold][anew]amix=inputs=2:duration=longest:dropout_transition=0[aout]", command)
+        self.assertIn(
+            "[0:a]volume=0.25[vold];[1:a]volume=0.80[anew];"
+            "[vold][anew]amix=inputs=2:duration=longest:dropout_transition=0[aout]",
+            command,
+        )
         self.assertEqual(command[-1], "output.mp4")
+
+    def test_build_youtube_playlist_command_builds_video_download(self):
+        command = merger.build_youtube_playlist_command(
+            "yt-dlp",
+            " https://www.youtube.com/playlist?list=abc ",
+            Path("."),
+            "video",
+        )
+
+        self.assertEqual(command[0], "yt-dlp")
+        self.assertIn("--yes-playlist", command)
+        self.assertIn("--merge-output-format", command)
+        self.assertIn("mp4", command)
+        self.assertIn("bv*+ba/b", command)
+        self.assertEqual(command[-1], "https://www.youtube.com/playlist?list=abc")
+
+    def test_build_youtube_playlist_command_builds_audio_download(self):
+        command = merger.build_youtube_playlist_command(
+            "yt-dlp",
+            "https://www.youtube.com/playlist?list=abc",
+            Path("."),
+            "audio",
+        )
+
+        self.assertIn("-x", command)
+        self.assertIn("--audio-format", command)
+        self.assertIn("mp3", command)
+        self.assertNotIn("--merge-output-format", command)
+
+    def test_build_youtube_playlist_command_validates_inputs(self):
+        with self.assertRaisesRegex(ValueError, "URL playlist"):
+            merger.build_youtube_playlist_command("yt-dlp", " ", Path("."), "video")
+        with self.assertRaisesRegex(ValueError, "Format download"):
+            merger.build_youtube_playlist_command(
+                "yt-dlp", "https://example.test", Path("."), "invalid"
+            )
+        with self.assertRaisesRegex(ValueError, "Folder download"):
+            merger.build_youtube_playlist_command(
+                "yt-dlp", "https://example.test", Path("missing-dir"), "video"
+            )
