@@ -30,6 +30,12 @@ class MediaInfo:
     duration: float | None
 
 
+@dataclass(frozen=True)
+class DownloadItem:
+    title: str
+    url: str
+
+
 def find_tool(name: str) -> str | None:
     """Return the executable path when a command exists in PATH."""
     return shutil.which(name)
@@ -164,6 +170,38 @@ def build_youtube_playlist_command(yt_dlp: str, url: str, output_dir: Path, medi
     return command
 
 
+def build_youtube_item_command(yt_dlp: str, url: str, output_dir: Path, media_format: str) -> list[str]:
+    """Build a yt-dlp command for downloading one queued media item."""
+    command = build_youtube_playlist_command(yt_dlp, url, output_dir, media_format)
+    command[1] = "--no-playlist"
+    return command
+
+
+def build_youtube_playlist_probe_command(yt_dlp: str, url: str) -> list[str]:
+    """Build a yt-dlp command that lists playlist entries without downloading media."""
+    clean_url = url.strip()
+    if not clean_url:
+        raise ValueError("URL playlist YouTube belum diisi.")
+    return [yt_dlp, "--flat-playlist", "--dump-single-json", clean_url]
+
+
+def parse_youtube_playlist_items(metadata_json: str) -> list[DownloadItem]:
+    """Parse yt-dlp flat playlist JSON into per-video queue items."""
+    data = json.loads(metadata_json)
+    entries = data.get("entries") or []
+    items: list[DownloadItem] = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or f"Item {index}")
+        url = entry.get("webpage_url") or entry.get("url")
+        if not url and entry.get("id"):
+            url = f"https://www.youtube.com/watch?v={entry['id']}"
+        if url:
+            items.append(DownloadItem(title=title, url=str(url)))
+    return items
+
+
 class MergerApp:
     """Tkinter UI for merging media and downloading YouTube playlists."""
 
@@ -182,6 +220,8 @@ class MergerApp:
         self.audio_list: Listbox | None = None
         self.download_queue_list: Listbox | None = None
         self.downloaded_list: Listbox | None = None
+        self.download_queue_items: list[DownloadItem] = []
+        self.downloaded_items: list[DownloadItem] = []
         self.playlist_url = StringVar()
         self.download_dir = StringVar(value=str(Path.home() / "Downloads"))
         self.download_format = StringVar(value="video")
@@ -202,8 +242,13 @@ class MergerApp:
         self.root.rowconfigure(1, weight=2)
         self.root.columnconfigure(0, weight=1)
 
-        notebook = ttk.Notebook(self.root)
-        notebook.grid(row=0, column=0, sticky="nsew")
+        main_pane = ttk.PanedWindow(self.root, orient="vertical")
+        main_pane.grid(row=0, column=0, rowspan=2, sticky="nsew")
+
+        notebook = ttk.Notebook(main_pane)
+        status_frame = ttk.Frame(main_pane, padding=(12, 8, 12, 12))
+        main_pane.add(notebook, weight=4)
+        main_pane.add(status_frame, weight=1)
 
         merge_tab = ttk.Frame(notebook, padding=12)
         download_tab = ttk.Frame(notebook, padding=12)
@@ -212,9 +257,6 @@ class MergerApp:
 
         self._build_merge_tab(merge_tab)
         self._build_download_tab(download_tab)
-
-        status_frame = ttk.Frame(self.root, padding=(12, 0, 12, 12))
-        status_frame.grid(row=1, column=0, sticky="nsew")
         self._build_progress_and_log(status_frame, start_row=0)
 
     def _build_merge_tab(self, main: ttk.Frame) -> None:
@@ -280,7 +322,8 @@ class MergerApp:
         url_row.columnconfigure(1, weight=1)
         ttk.Label(url_row, text="URL Playlist").grid(row=0, column=0, sticky="w")
         ttk.Entry(url_row, textvariable=self.playlist_url).grid(row=0, column=1, sticky="ew", padx=8)
-        ttk.Button(url_row, text="Tambah ke Antrian", command=self._add_download_queue_item).grid(row=0, column=2)
+        ttk.Button(url_row, text="Muat Playlist", command=self._start_load_playlist_items).grid(row=0, column=2)
+        ttk.Button(url_row, text="Tambah URL", command=self._add_download_queue_item).grid(row=0, column=3, padx=(6, 0))
 
         folder_row = ttk.Frame(main)
         folder_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=4)
@@ -310,12 +353,14 @@ class MergerApp:
 
         listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=7)
         listbox.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        listbox.configure(yscrollcommand=scrollbar.set)
+        scrollbar_y = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar_y.grid(row=0, column=1, sticky="ns")
+        scrollbar_x = ttk.Scrollbar(frame, orient="horizontal", command=listbox.xview)
+        scrollbar_x.grid(row=1, column=0, sticky="ew")
+        listbox.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Button(buttons, text="Tambah", command=add_command).pack(side="left")
         ttk.Button(buttons, text="Hapus Terpilih", command=remove_command).pack(side="left", padx=6)
         ttk.Button(buttons, text="Acak", command=shuffle_command).pack(side="left")
@@ -329,15 +374,19 @@ class MergerApp:
 
         listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=8)
         listbox.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        listbox.configure(yscrollcommand=scrollbar.set)
+        scrollbar_y = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar_y.grid(row=0, column=1, sticky="ns")
+        scrollbar_x = ttk.Scrollbar(frame, orient="horizontal", command=listbox.xview)
+        scrollbar_x.grid(row=1, column=0, sticky="ew")
+        listbox.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
 
         if remove_command is not None:
-            ttk.Button(frame, text="Hapus Terpilih", command=remove_command).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            ttk.Button(frame, text="Hapus Terpilih", command=remove_command).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
         return listbox
 
     def _build_progress_and_log(self, main: ttk.Frame, start_row: int) -> None:
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(start_row + 2, weight=1)
         progress_row = ttk.Frame(main)
         progress_row.grid(row=start_row, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         progress_row.columnconfigure(0, weight=1)
@@ -347,10 +396,18 @@ class MergerApp:
         self.progress_label.grid(row=0, column=1, sticky="e")
 
         ttk.Label(main, textvariable=self.status).grid(row=start_row + 1, column=0, columnspan=3, sticky="w")
-        self.log = ttk.Treeview(main, columns=("pesan",), show="headings", height=6)
+        log_frame = ttk.Frame(main)
+        log_frame.grid(row=start_row + 2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+        self.log = ttk.Treeview(log_frame, columns=("pesan",), show="headings", height=6)
         self.log.heading("pesan", text="Log")
-        self.log.grid(row=start_row + 2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
-        main.rowconfigure(start_row + 2, weight=1)
+        self.log.grid(row=0, column=0, sticky="nsew")
+        log_scroll_y = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
+        log_scroll_y.grid(row=0, column=1, sticky="ns")
+        log_scroll_x = ttk.Scrollbar(log_frame, orient="horizontal", command=self.log.xview)
+        log_scroll_x.grid(row=1, column=0, sticky="ew")
+        self.log.configure(yscrollcommand=log_scroll_y.set, xscrollcommand=log_scroll_x.set)
 
     def _file_row(self, parent: ttk.Frame, row: int, label: str, variable: StringVar, command) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)
@@ -447,20 +504,66 @@ class MergerApp:
         if not url:
             messagebox.showerror("URL kosong", "Isi URL playlist YouTube terlebih dahulu.")
             return
-        if self.download_queue_list is not None:
-            self.download_queue_list.insert(END, url)
+        self.download_queue_items.append(DownloadItem(title=url, url=url))
+        self._refresh_download_lists()
         self.playlist_url.set("")
+
+    def _start_load_playlist_items(self) -> None:
+        try:
+            command = self._build_playlist_probe_command()
+        except ValueError as exc:
+            messagebox.showerror("Input download belum lengkap", str(exc))
+            return
+        self.progress_bar.configure(mode="indeterminate")
+        self.progress_bar.start(10)
+        self.status.set("Memuat daftar lagu/video dari playlist...")
+        self._add_log("Mengambil daftar item playlist dengan yt-dlp...")
+        threading.Thread(target=self._load_playlist_items, args=(command,), daemon=True).start()
+
+    def _build_playlist_probe_command(self) -> list[str]:
+        yt_dlp = find_tool("yt-dlp")
+        if not yt_dlp:
+            raise ValueError("yt-dlp tidak ditemukan di PATH.")
+        return build_youtube_playlist_probe_command(yt_dlp, self.playlist_url.get())
+
+    def _load_playlist_items(self, command: list[str]) -> None:
+        result = run_command(command)
+        if result.returncode != 0:
+            error = result.stderr.strip() or result.stdout.strip() or "yt-dlp gagal membaca playlist."
+            self.log_queue.put(f"GAGAL::{error}")
+            return
+        try:
+            items = parse_youtube_playlist_items(result.stdout)
+        except json.JSONDecodeError as exc:
+            self.log_queue.put(f"GAGAL::Metadata playlist tidak valid: {exc}")
+            return
+        if not items:
+            self.log_queue.put("GAGAL::Playlist tidak berisi item yang bisa didownload.")
+            return
+        self.log_queue.put(f"QUEUE_ITEMS::{json.dumps([item.__dict__ for item in items])}")
 
     def _remove_download_queue_items(self) -> None:
         if self.download_queue_list is None:
             return
-        for index in reversed(self.download_queue_list.curselection()):
-            self.download_queue_list.delete(index)
+        selected = set(self.download_queue_list.curselection())
+        self.download_queue_items = [
+            item for index, item in enumerate(self.download_queue_items) if index not in selected
+        ]
+        self._refresh_download_lists()
 
-    def _queued_download_urls(self) -> list[str]:
-        if self.download_queue_list is None:
-            return []
-        return [self.download_queue_list.get(index) for index in range(self.download_queue_list.size())]
+    def _queued_download_items(self) -> list[DownloadItem]:
+        return list(self.download_queue_items)
+
+    def _refresh_download_lists(self) -> None:
+        self._refresh_download_listbox(self.download_queue_list, self.download_queue_items)
+        self._refresh_download_listbox(self.downloaded_list, self.downloaded_items)
+
+    def _refresh_download_listbox(self, listbox: Listbox | None, items: Sequence[DownloadItem]) -> None:
+        if listbox is None:
+            return
+        listbox.delete(0, END)
+        for index, item in enumerate(items, start=1):
+            listbox.insert(END, f"{index}. {item.title}")
 
     def _suggest_output(self) -> None:
         if self.output_path.get() or not self.video_files:
@@ -505,14 +608,20 @@ class MergerApp:
         self._add_log("Menjalankan yt-dlp untuk antrian download...")
         threading.Thread(target=self._run_playlist_downloads, args=(commands,), daemon=True).start()
 
-    def _build_playlist_download_commands(self) -> list[tuple[str, list[str]]]:
+    def _build_playlist_download_commands(self) -> list[tuple[DownloadItem, list[str]]]:
         yt_dlp = find_tool("yt-dlp")
         if not yt_dlp:
             raise ValueError("yt-dlp tidak ditemukan di PATH.")
-        urls = self._queued_download_urls() or [self.playlist_url.get().strip()]
-        commands = []
-        for url in urls:
-            commands.append((url, build_youtube_playlist_command(yt_dlp, url, Path(self.download_dir.get()), self.download_format.get())))
+        items = self._queued_download_items()
+        if not items:
+            url = self.playlist_url.get().strip()
+            items = [DownloadItem(title=url, url=url)]
+        commands: list[tuple[DownloadItem, list[str]]] = []
+        for item in items:
+            command = build_youtube_item_command(
+                yt_dlp, item.url, Path(self.download_dir.get()), self.download_format.get()
+            )
+            commands.append((item, command))
         return commands
 
     def _build_playlist_download_command(self) -> list[str]:
@@ -617,15 +726,15 @@ class MergerApp:
             error = output_lines[-1] if output_lines else "FFmpeg gagal tanpa pesan."
             self.log_queue.put(f"GAGAL::{error}")
 
-    def _run_playlist_downloads(self, commands: Sequence[tuple[str, list[str]]]) -> None:
-        for url, command in commands:
-            ok = self._run_playlist_download(url, command)
+    def _run_playlist_downloads(self, commands: Sequence[tuple[DownloadItem, list[str]]]) -> None:
+        for item, command in commands:
+            ok = self._run_playlist_download(item, command)
             if not ok:
                 return
         self.log_queue.put("PROGRESS::100")
         self.log_queue.put("SELESAI::Antrian playlist berhasil diunduh.")
 
-    def _run_playlist_download(self, url: str, command: list[str]) -> bool:
+    def _run_playlist_download(self, item: DownloadItem, command: list[str]) -> bool:
         startupinfo = None
         if hasattr(subprocess, "STARTUPINFO"):
             startupinfo = subprocess.STARTUPINFO()
@@ -647,7 +756,7 @@ class MergerApp:
                 output_lines.append(stripped)
         return_code = process.wait()
         if return_code == 0:
-            self.log_queue.put(f"DOWNLOAD_DONE::{url}")
+            self.log_queue.put(f"DOWNLOAD_DONE::{json.dumps(item.__dict__)}")
             return True
         error = output_lines[-1] if output_lines else "yt-dlp gagal tanpa pesan."
         self.log_queue.put(f"GAGAL::{error}")
@@ -680,6 +789,8 @@ class MergerApp:
                 self._set_progress(float(message.removeprefix("PROGRESS::")))
             elif message.startswith("LOG::"):
                 self._add_log(message.removeprefix("LOG::"))
+            elif message.startswith("QUEUE_ITEMS::"):
+                self._add_loaded_queue_items(message.removeprefix("QUEUE_ITEMS::"))
             elif message.startswith("DOWNLOAD_DONE::"):
                 self._mark_download_done(message.removeprefix("DOWNLOAD_DONE::"))
             elif message.startswith("SELESAI::"):
@@ -697,15 +808,22 @@ class MergerApp:
                 messagebox.showerror("Gagal", self.log.item(self.log.get_children()[-1], "values")[0])
         self.root.after(200, self._poll_log_queue)
 
-    def _mark_download_done(self, url: str) -> None:
-        if self.downloaded_list is not None:
-            self.downloaded_list.insert(END, f"{self.download_format.get().upper()} - {url}")
-        if self.download_queue_list is not None:
-            for index in range(self.download_queue_list.size()):
-                if self.download_queue_list.get(index) == url:
-                    self.download_queue_list.delete(index)
-                    break
-        self._add_log(f"Selesai download: {url}")
+    def _mark_download_done(self, payload: str) -> None:
+        data = json.loads(payload)
+        item = DownloadItem(title=str(data["title"]), url=str(data["url"]))
+        self.downloaded_items.append(item)
+        self.download_queue_items = [queued for queued in self.download_queue_items if queued.url != item.url]
+        self._refresh_download_lists()
+        self._add_log(f"Selesai download: {item.title}")
+
+    def _add_loaded_queue_items(self, payload: str) -> None:
+        data = json.loads(payload)
+        self.download_queue_items.extend(DownloadItem(title=str(item["title"]), url=str(item["url"])) for item in data)
+        self._refresh_download_lists()
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode="determinate")
+        self.status.set(f"Berhasil memuat {len(data)} item ke antrian download.")
+        self._add_log(self.status.get())
 
     def _set_progress(self, percent: float) -> None:
         self.progress.set(percent)

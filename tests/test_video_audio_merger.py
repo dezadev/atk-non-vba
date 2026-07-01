@@ -125,12 +125,12 @@ class VideoAudioMergerTests(TestCase):
             merger.build_youtube_playlist_command(
                 "yt-dlp", "https://example.test", Path("missing-dir"), "video"
             )
-    def test_build_playlist_download_commands_uses_queued_urls(self):
+    def test_build_playlist_download_commands_uses_queued_items(self):
         app = merger.MergerApp.__new__(merger.MergerApp)
-        app.download_queue_list = FakeListbox([
-            "https://www.youtube.com/playlist?list=one",
-            "https://www.youtube.com/playlist?list=two",
-        ])
+        app.download_queue_items = [
+            merger.DownloadItem("Song One", "https://www.youtube.com/watch?v=one"),
+            merger.DownloadItem("Song Two", "https://www.youtube.com/watch?v=two"),
+        ]
         app.playlist_url = FakeVar("https://www.youtube.com/playlist?list=ignored")
         app.download_dir = FakeVar(".")
         app.download_format = FakeVar("audio")
@@ -138,8 +138,14 @@ class VideoAudioMergerTests(TestCase):
         with patch.object(merger, "find_tool", return_value="yt-dlp"):
             commands = app._build_playlist_download_commands()
 
-        self.assertEqual([url for url, _ in commands], [
-            "https://www.youtube.com/playlist?list=one",
-            "https://www.youtube.com/playlist?list=two",
-        ])
+        self.assertEqual([item.title for item, _ in commands], ["Song One", "Song Two"])
+        self.assertTrue(all("--no-playlist" in command for _, command in commands))
         self.assertTrue(all("--audio-format" in command for _, command in commands))
+
+    def test_parse_youtube_playlist_items_returns_individual_entries(self):
+        items = merger.parse_youtube_playlist_items(
+            '{"entries":[{"title":"Song One","id":"abc"},{"title":"Song Two","webpage_url":"https://youtu.be/def"}]}'
+        )
+
+        self.assertEqual(items[0], merger.DownloadItem("Song One", "https://www.youtube.com/watch?v=abc"))
+        self.assertEqual(items[1], merger.DownloadItem("Song Two", "https://youtu.be/def"))

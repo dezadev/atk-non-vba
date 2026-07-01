@@ -13,7 +13,7 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
 - Pengaturan volume audio asli video dan audio baru.
 - Tampilan desktop sederhana berbahasa Indonesia.
 - Progress bar saat proses berjalan dan popup notifikasi ketika proses selesai atau gagal.
-- Download playlist YouTube melalui tab **Download YouTube** menggunakan `yt-dlp`, lengkap dengan list antrian download dan list item yang sudah terdownload.
+- Download playlist YouTube melalui tab **Download YouTube** menggunakan `yt-dlp`, lengkap dengan pemuatan daftar lagu/video satu per satu, list antrian download, dan list item yang sudah terdownload.
 - Pilihan download playlist sebagai video MP4 terbaik atau audio MP3 saja.
 
 ### Prasyarat
@@ -54,19 +54,13 @@ Setelah aplikasi terbuka, gunakan tab **Gabung Media** untuk menggabungkan file 
 Gunakan tab **Download YouTube** untuk mengunduh playlist:
 
 1. Tempel URL playlist YouTube pada kolom **URL Playlist**.
-2. Klik **Tambah ke Antrian** untuk memasukkan URL ke list **Antrian Download**.
-3. Ulangi langkah sebelumnya jika ingin menambahkan beberapa playlist.
-4. Pilih folder download lokal.
-5. Pilih format **Video MP4 terbaik** atau **Audio MP3 saja**.
-6. Klik **Download Antrian** dan pantau log/progress sampai popup selesai muncul.
-7. Playlist yang selesai diproses akan dipindahkan ke list **Sudah Terdownload**.
-
-Gunakan tab **Download YouTube** untuk mengunduh playlist:
-
-1. Tempel URL playlist YouTube pada kolom **URL Playlist**.
-2. Pilih folder download lokal.
-3. Pilih format **Video MP4 terbaik** atau **Audio MP3 saja**.
-4. Klik **Download Playlist** dan pantau log/progress sampai popup selesai muncul.
+2. Klik **Muat Playlist** untuk mengambil daftar lagu/video dari playlist dan menampilkannya satu per satu di list **Antrian Download**.
+3. Jika ingin menambahkan satu URL langsung tanpa memuat playlist, klik **Tambah URL**.
+4. Gunakan **Hapus Terpilih** untuk membuang item tertentu dari antrian.
+5. Pilih folder download lokal.
+6. Pilih format **Video MP4 terbaik** atau **Audio MP3 saja**.
+7. Klik **Download Antrian** dan pantau log/progress sampai popup selesai muncul.
+8. Item yang selesai diproses akan dipindahkan satu per satu ke list **Sudah Terdownload**.
 
 ### Catatan Output
 
