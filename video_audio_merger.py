@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""A simple desktop app to merge video and audio with FFmpeg.
+"""A desktop app to merge media with FFmpeg and download YouTube playlists.
 
-Targeted for Python 3.14+ and uses only the standard library plus an installed
-``ffmpeg`` executable. The UI is intentionally compact and Indonesian-language
-for easy local use.
+Targeted for Python 3.14+ and uses only the standard library plus installed
+``ffmpeg`` and optional ``yt-dlp`` executables. The UI is intentionally compact
+and Indonesian-language for easy local use.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from tkinter import BooleanVar, DoubleVar, IntVar, StringVar, Tk, filedialog, messagebox, ttk
 from typing import Iterable, Sequence
 
-APP_TITLE = "Penggabung Video & Audio (FFmpeg)"
+APP_TITLE = "Toolkit Video & Audio (FFmpeg + yt-dlp)"
 VIDEO_EXTENSIONS = (("Video", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Semua file", "*.*"))
 AUDIO_EXTENSIONS = (("Audio", "*.mp3 *.wav *.aac *.m4a *.ogg *.flac"), ("Semua file", "*.*"))
 OUTPUT_EXTENSIONS = (("MP4", "*.mp4"), ("MKV", "*.mkv"), ("Semua file", "*.*"))
@@ -131,8 +131,40 @@ def format_duration(seconds: float | None) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def build_youtube_playlist_command(yt_dlp: str, url: str, output_dir: Path, media_format: str) -> list[str]:
+    """Build a yt-dlp command for downloading a YouTube playlist."""
+    clean_url = url.strip()
+    if not clean_url:
+        raise ValueError("URL playlist YouTube belum diisi.")
+    download_dir = output_dir.expanduser().resolve()
+    if not download_dir.is_dir():
+        raise ValueError(f"Folder download tidak ditemukan: {download_dir}")
+
+    output_template = "%(playlist_index|)s-%(title).200B.%(ext)s"
+    command = [
+        yt_dlp,
+        "--yes-playlist",
+        "--ignore-errors",
+        "--newline",
+        "--progress-template",
+        "download:%(progress._percent_str)s",
+        "-P",
+        str(download_dir),
+        "-o",
+        output_template,
+    ]
+    if media_format == "audio":
+        command.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
+    elif media_format == "video":
+        command.extend(["--merge-output-format", "mp4", "-f", "bv*+ba/b"])
+    else:
+        raise ValueError("Format download harus 'video' atau 'audio'.")
+    command.append(clean_url)
+    return command
+
+
 class MergerApp:
-    """Tkinter UI for combining one video file and one audio file."""
+    """Tkinter UI for merging media and downloading YouTube playlists."""
 
     def __init__(self, root: Tk) -> None:
         self.root = root
@@ -145,6 +177,9 @@ class MergerApp:
         self.video_path = StringVar()
         self.audio_path = StringVar()
         self.output_path = StringVar()
+        self.playlist_url = StringVar()
+        self.download_dir = StringVar(value=str(Path.home() / "Downloads"))
+        self.download_format = StringVar(value="video")
         self.duration_mode = StringVar(value="shortest")
         self.video_volume = IntVar(value=0)
         self.audio_volume = IntVar(value=100)
@@ -155,14 +190,28 @@ class MergerApp:
 
         self._build_ui()
         self._poll_log_queue()
-        self._check_ffmpeg()
+        self._check_tools()
 
     def _build_ui(self) -> None:
-        main = ttk.Frame(self.root, padding=18)
-        main.pack(fill="both", expand=True)
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True)
+
+        merge_tab = ttk.Frame(notebook, padding=18)
+        download_tab = ttk.Frame(notebook, padding=18)
+        notebook.add(merge_tab, text="Gabung Media")
+        notebook.add(download_tab, text="Download YouTube")
+
+        self._build_merge_tab(merge_tab)
+        self._build_download_tab(download_tab)
+
+        status_frame = ttk.Frame(self.root, padding=(18, 0, 18, 18))
+        status_frame.pack(fill="both", expand=True)
+        self._build_progress_and_log(status_frame, start_row=0)
+
+    def _build_merge_tab(self, main: ttk.Frame) -> None:
         main.columnconfigure(1, weight=1)
 
-        title = ttk.Label(main, text=APP_TITLE, font=("Segoe UI", 16, "bold"))
+        title = ttk.Label(main, text="Penggabung Video & Audio", font=("Segoe UI", 16, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         subtitle = ttk.Label(main, text="Gabungkan video dan audio, lalu pilih cara menyesuaikan durasi hasil.")
         subtitle.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
@@ -196,29 +245,57 @@ class MergerApp:
         ttk.Button(buttons, text="Gabungkan Sekarang", command=self._start_merge).pack(side="left")
         ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
 
+    def _build_download_tab(self, main: ttk.Frame) -> None:
+        main.columnconfigure(1, weight=1)
+        title = ttk.Label(main, text="YouTube Playlist Downloader", font=("Segoe UI", 16, "bold"))
+        title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        subtitle = ttk.Label(main, text="Download seluruh playlist YouTube dengan yt-dlp ke folder lokal.")
+        subtitle.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
+
+        ttk.Label(main, text="URL Playlist").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(main, textvariable=self.playlist_url).grid(row=2, column=1, columnspan=2, sticky="ew", padx=8, pady=4)
+        self._file_row(main, 3, "Folder", self.download_dir, self._choose_download_dir)
+
+        format_box = ttk.LabelFrame(main, text="Format download", padding=12)
+        format_box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 8))
+        ttk.Radiobutton(format_box, text="Video MP4 terbaik", variable=self.download_format, value="video").pack(anchor="w", pady=2)
+        ttk.Radiobutton(format_box, text="Audio MP3 saja", variable=self.download_format, value="audio").pack(anchor="w", pady=2)
+
+        buttons = ttk.Frame(main)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 8))
+        ttk.Button(buttons, text="Download Playlist", command=self._start_playlist_download).pack(side="left")
+        ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
+
+    def _build_progress_and_log(self, main: ttk.Frame, start_row: int) -> None:
         progress_row = ttk.Frame(main)
-        progress_row.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        progress_row.grid(row=start_row, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         progress_row.columnconfigure(0, weight=1)
         self.progress_bar = ttk.Progressbar(progress_row, variable=self.progress, maximum=100)
         self.progress_bar.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.progress_label = ttk.Label(progress_row, text="0%")
         self.progress_label.grid(row=0, column=1, sticky="e")
 
-        ttk.Label(main, textvariable=self.status).grid(row=9, column=0, columnspan=3, sticky="w")
+        ttk.Label(main, textvariable=self.status).grid(row=start_row + 1, column=0, columnspan=3, sticky="w")
         self.log = ttk.Treeview(main, columns=("pesan",), show="headings", height=6)
         self.log.heading("pesan", text="Log")
-        self.log.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
-        main.rowconfigure(10, weight=1)
+        self.log.grid(row=start_row + 2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        main.rowconfigure(start_row + 2, weight=1)
 
     def _file_row(self, parent: ttk.Frame, row: int, label: str, variable: StringVar, command) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)
         ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=8, pady=4)
         ttk.Button(parent, text="Pilih...", command=command).grid(row=row, column=2, sticky="ew", pady=4)
 
-    def _check_ffmpeg(self) -> None:
+    def _check_tools(self) -> None:
+        missing: list[str] = []
         if not find_tool("ffmpeg"):
-            messagebox.showwarning("FFmpeg belum ditemukan", "Install FFmpeg dan pastikan perintah 'ffmpeg' tersedia di PATH.")
-            self.status.set("FFmpeg belum ditemukan di PATH.")
+            missing.append("ffmpeg")
+        if not find_tool("yt-dlp"):
+            missing.append("yt-dlp")
+        if missing:
+            tools = ", ".join(missing)
+            messagebox.showwarning("Tool belum ditemukan", f"Install {tools} dan pastikan tersedia di PATH.")
+            self.status.set(f"Tool belum ditemukan di PATH: {tools}.")
 
     def _choose_video(self) -> None:
         paths = filedialog.askopenfilenames(title="Pilih satu atau banyak video", filetypes=VIDEO_EXTENSIONS)
@@ -239,6 +316,11 @@ class MergerApp:
         path = filedialog.asksaveasfilename(title="Simpan hasil", defaultextension=".mp4", filetypes=OUTPUT_EXTENSIONS)
         if path:
             self.output_path.set(path)
+
+    def _choose_download_dir(self) -> None:
+        path = filedialog.askdirectory(title="Pilih folder download")
+        if path:
+            self.download_dir.set(path)
 
     def _suggest_output(self) -> None:
         if self.output_path.get() or not self.video_files:
@@ -270,17 +352,45 @@ class MergerApp:
         self._add_log("Menjalankan FFmpeg...")
         threading.Thread(target=self._run_merge, args=(command, expected_duration, cleanup_paths), daemon=True).start()
 
+    def _start_playlist_download(self) -> None:
+        try:
+            command = self._build_playlist_download_command()
+        except ValueError as exc:
+            messagebox.showerror("Input download belum lengkap", str(exc))
+            return
+        self._set_progress(0)
+        self.progress_bar.configure(mode="indeterminate")
+        self.progress_bar.start(10)
+        self.status.set("Mengunduh playlist... jangan tutup aplikasi.")
+        self._add_log("Menjalankan yt-dlp...")
+        threading.Thread(target=self._run_playlist_download, args=(command,), daemon=True).start()
+
+    def _build_playlist_download_command(self) -> list[str]:
+        yt_dlp = find_tool("yt-dlp")
+        if not yt_dlp:
+            raise ValueError("yt-dlp tidak ditemukan di PATH.")
+        return build_youtube_playlist_command(
+            yt_dlp,
+            self.playlist_url.get(),
+            Path(self.download_dir.get()),
+            self.download_format.get(),
+        )
+
     def _build_ffmpeg_command(self) -> tuple[list[str], float | None, list[Path]]:
         ffmpeg = find_tool("ffmpeg")
         if not ffmpeg:
             raise ValueError("FFmpeg tidak ditemukan di PATH.")
-        output = Path(self.output_path.get())
+        output_name = self.output_path.get().strip()
+        if not output_name:
+            raise ValueError("Lokasi output belum dipilih.")
+        output = Path(output_name)
+        output_parent = output.expanduser().resolve().parent
+        if not output_parent.is_dir():
+            raise ValueError(f"Folder output tidak ditemukan: {output_parent}")
         if not self.video_files or any(not path.is_file() for path in self.video_files):
             raise ValueError("File video belum dipilih atau ada yang tidak ditemukan.")
         if not self.audio_files or any(not path.is_file() for path in self.audio_files):
             raise ValueError("File audio belum dipilih atau ada yang tidak ditemukan.")
-        if not self.output_path.get().strip():
-            raise ValueError("Lokasi output belum dipilih.")
 
         cleanup_paths: list[Path] = []
         video_input = self.video_files[0]
@@ -364,6 +474,44 @@ class MergerApp:
             error = output_lines[-1] if output_lines else "FFmpeg gagal tanpa pesan."
             self.log_queue.put(f"GAGAL::{error}")
 
+    def _run_playlist_download(self, command: list[str]) -> None:
+        startupinfo = None
+        if hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        return_code = 1
+        output_lines: list[str] = []
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            startupinfo=startupinfo,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            stripped = line.strip()
+            self._handle_download_line(stripped)
+            if stripped:
+                output_lines.append(stripped)
+        return_code = process.wait()
+        if return_code == 0:
+            self.log_queue.put("PROGRESS::100")
+            self.log_queue.put("SELESAI::Playlist berhasil diunduh.")
+        else:
+            error = output_lines[-1] if output_lines else "yt-dlp gagal tanpa pesan."
+            self.log_queue.put(f"GAGAL::{error}")
+
+    def _handle_download_line(self, line: str) -> None:
+        if line.startswith("download:"):
+            percent_text = line.removeprefix("download:").strip().rstrip("%")
+            try:
+                self.log_queue.put(f"PROGRESS::{float(percent_text):.1f}")
+            except ValueError:
+                return
+        elif line:
+            self.log_queue.put(f"LOG::{line}")
+
     def _handle_progress_line(self, line: str, expected_duration: float | None) -> None:
         if expected_duration is None or expected_duration <= 0 or not line.startswith("out_time_ms="):
             return
@@ -379,6 +527,8 @@ class MergerApp:
             message = self.log_queue.get()
             if message.startswith("PROGRESS::"):
                 self._set_progress(float(message.removeprefix("PROGRESS::")))
+            elif message.startswith("LOG::"):
+                self._add_log(message.removeprefix("LOG::"))
             elif message.startswith("SELESAI::"):
                 self.progress_bar.stop()
                 self.progress_bar.configure(mode="determinate")
