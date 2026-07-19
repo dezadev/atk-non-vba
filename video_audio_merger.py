@@ -209,7 +209,8 @@ class MergerApp:
         self.root = root
         self.root.title(APP_TITLE)
         self.root.geometry("900x680")
-        self.root.minsize(640, 460)
+        self.root.minsize(760, 560)
+        self._configure_styles()
 
         self.video_files: list[Path] = []
         self.audio_files: list[Path] = []
@@ -237,6 +238,52 @@ class MergerApp:
         self._poll_log_queue()
         self._check_tools()
 
+    def _configure_styles(self) -> None:
+        """Apply a calmer, more polished ttk theme."""
+        self.root.configure(bg="#eef2f7")
+        self.root.option_add("*Font", ("Segoe UI", 10))
+        self.root.option_add("*Listbox.Font", ("Segoe UI", 10))
+        self.root.option_add("*Listbox.Background", "#ffffff")
+        self.root.option_add("*Listbox.Foreground", "#111827")
+        self.root.option_add("*Listbox.SelectBackground", "#2563eb")
+        self.root.option_add("*Listbox.SelectForeground", "#ffffff")
+
+        style = ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+
+        colors = {
+            "bg": "#eef2f7",
+            "surface": "#ffffff",
+            "surface_alt": "#f8fafc",
+            "border": "#d8dee9",
+            "text": "#111827",
+            "muted": "#64748b",
+            "primary": "#2563eb",
+            "primary_hover": "#1d4ed8",
+        }
+        style.configure(".", background=colors["bg"], foreground=colors["text"], font=("Segoe UI", 10))
+        style.configure("TFrame", background=colors["bg"])
+        style.configure("Card.TFrame", background=colors["surface"], relief="flat")
+        style.configure("Hero.TFrame", background="#1e3a8a", relief="flat")
+        style.configure("TLabel", background=colors["bg"], foreground=colors["text"])
+        style.configure("Card.TLabel", background=colors["surface"], foreground=colors["text"])
+        style.configure("HeroTitle.TLabel", background="#1e3a8a", foreground="#ffffff", font=("Segoe UI", 18, "bold"))
+        style.configure("HeroSubtitle.TLabel", background="#1e3a8a", foreground="#dbeafe", font=("Segoe UI", 10))
+        style.configure("Muted.TLabel", background=colors["surface"], foreground=colors["muted"])
+        style.configure("TLabelframe", background=colors["surface"], bordercolor=colors["border"], relief="solid")
+        style.configure("TLabelframe.Label", background=colors["surface"], foreground=colors["text"], font=("Segoe UI", 10, "bold"))
+        style.configure("TNotebook", background=colors["bg"], borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(16, 8), font=("Segoe UI", 10, "bold"))
+        style.map("TNotebook.Tab", background=[("selected", colors["surface"]), ("active", colors["surface_alt"])])
+        style.configure("TButton", padding=(12, 7), font=("Segoe UI", 10, "bold"), borderwidth=1)
+        style.configure("Accent.TButton", background=colors["primary"], foreground="#ffffff")
+        style.map("Accent.TButton", background=[("active", colors["primary_hover"]), ("pressed", "#1e40af")])
+        style.configure("TEntry", fieldbackground="#ffffff", bordercolor=colors["border"], padding=6)
+        style.configure("Horizontal.TProgressbar", background=colors["primary"], troughcolor="#dbeafe", bordercolor="#dbeafe")
+        style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", foreground=colors["text"], rowheight=24, bordercolor=colors["border"])
+        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background=colors["surface_alt"])
+
     def _build_ui(self) -> None:
         self.root.rowconfigure(0, weight=3)
         self.root.rowconfigure(1, weight=2)
@@ -250,8 +297,8 @@ class MergerApp:
         main_pane.add(notebook, weight=4)
         main_pane.add(status_frame, weight=1)
 
-        merge_tab = ttk.Frame(notebook, padding=12)
-        download_tab = ttk.Frame(notebook, padding=12)
+        merge_tab = ttk.Frame(notebook, padding=18)
+        download_tab = ttk.Frame(notebook, padding=18)
         notebook.add(merge_tab, text="Gabung Media")
         notebook.add(download_tab, text="Download YouTube")
 
@@ -264,10 +311,11 @@ class MergerApp:
         main.columnconfigure(1, weight=1)
         main.rowconfigure(2, weight=1)
 
-        title = ttk.Label(main, text="Penggabung Video & Audio", font=("Segoe UI", 16, "bold"))
-        title.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        subtitle = ttk.Label(main, text="Kelola daftar video/audio, acak urutan bila perlu, lalu gabungkan.")
-        subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        self._section_header(
+            main,
+            "Penggabung Video & Audio",
+            "Kelola daftar video/audio, acak urutan bila perlu, lalu gabungkan dengan kontrol durasi yang jelas.",
+        )
 
         self.video_list = self._media_list_panel(
             main, 2, 0, "Daftar Video", self._add_video_files, self._remove_selected_videos, self._shuffle_videos
@@ -303,7 +351,7 @@ class MergerApp:
 
         buttons = ttk.Frame(main)
         buttons.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        ttk.Button(buttons, text="Gabungkan Sekarang", command=self._start_merge).pack(side="left")
+        ttk.Button(buttons, text="Gabungkan Sekarang", style="Accent.TButton", command=self._start_merge).pack(side="left")
         ttk.Button(buttons, text="Acak Semua", command=self._shuffle_all_media).pack(side="left", padx=8)
         ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
 
@@ -312,10 +360,11 @@ class MergerApp:
         main.columnconfigure(1, weight=1)
         main.rowconfigure(5, weight=1)
 
-        title = ttk.Label(main, text="YouTube Playlist Downloader", font=("Segoe UI", 16, "bold"))
-        title.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        subtitle = ttk.Label(main, text="Tambahkan URL ke antrian, lalu download sebagai video MP4 atau audio MP3.")
-        subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        self._section_header(
+            main,
+            "YouTube Playlist Downloader",
+            "Tambahkan URL ke antrian, lalu download sebagai video MP4 terbaik atau audio MP3 berkualitas tinggi.",
+        )
 
         url_row = ttk.Frame(main)
         url_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
@@ -342,8 +391,16 @@ class MergerApp:
 
         buttons = ttk.Frame(main)
         buttons.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(buttons, text="Download Antrian", command=self._start_playlist_download).pack(side="left")
+        ttk.Button(buttons, text="Download Antrian", style="Accent.TButton", command=self._start_playlist_download).pack(side="left")
         ttk.Button(buttons, text="Keluar", command=self.root.destroy).pack(side="right")
+
+
+    def _section_header(self, parent: ttk.Frame, title: str, subtitle: str) -> None:
+        hero = ttk.Frame(parent, style="Hero.TFrame", padding=(18, 14))
+        hero.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        hero.columnconfigure(0, weight=1)
+        ttk.Label(hero, text=title, style="HeroTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(hero, text=subtitle, style="HeroSubtitle.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
     def _media_list_panel(self, parent: ttk.Frame, row: int, column: int, title: str, add_command, remove_command, shuffle_command) -> Listbox:
         frame = ttk.LabelFrame(parent, text=title, padding=8)
@@ -351,7 +408,7 @@ class MergerApp:
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
-        listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=7)
+        listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=7, relief="flat", borderwidth=0, highlightthickness=1, highlightbackground="#d8dee9", activestyle="none")
         listbox.grid(row=0, column=0, sticky="nsew")
         scrollbar_y = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
         scrollbar_y.grid(row=0, column=1, sticky="ns")
@@ -372,7 +429,7 @@ class MergerApp:
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
-        listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=8)
+        listbox = Listbox(frame, selectmode=EXTENDED, exportselection=False, height=8, relief="flat", borderwidth=0, highlightthickness=1, highlightbackground="#d8dee9", activestyle="none")
         listbox.grid(row=0, column=0, sticky="nsew")
         scrollbar_y = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
         scrollbar_y.grid(row=0, column=1, sticky="ns")
@@ -400,7 +457,7 @@ class MergerApp:
         log_frame.grid(row=start_row + 2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
-        self.log = ttk.Treeview(log_frame, columns=("pesan",), show="headings", height=6)
+        self.log = ttk.Treeview(log_frame, columns=("pesan",), show="headings", height=6, style="Treeview")
         self.log.heading("pesan", text="Log")
         self.log.grid(row=0, column=0, sticky="nsew")
         log_scroll_y = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
