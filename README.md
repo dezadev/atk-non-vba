@@ -11,7 +11,7 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
   - **Ikuti durasi video**: audio baru dipotong atau di-loop otomatis sampai durasi video cukup.
   - **Ikuti durasi audio**: video dipotong atau di-loop otomatis sampai durasi audio cukup.
 - Pengaturan volume audio asli video dan audio baru.
-- Tampilan desktop sederhana berbahasa Indonesia.
+- Tampilan desktop berbahasa Indonesia dengan tema profesional, header yang lebih rapi, tombol aksi utama yang menonjol, dan area daftar/log yang lebih mudah dipindai.
 - Progress bar saat proses berjalan dan popup notifikasi ketika proses selesai atau gagal.
 - Download playlist YouTube melalui tab **Download YouTube** menggunakan `yt-dlp`, lengkap dengan pemuatan daftar lagu/video satu per satu, list antrian download, dan list item yang sudah terdownload.
 - Pilihan download playlist sebagai video MP4 terbaik atau audio MP3 saja.
