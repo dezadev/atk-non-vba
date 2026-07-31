@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import random
 import shutil
 import subprocess
@@ -132,6 +133,11 @@ def total_duration(paths: Sequence[Path]) -> float | None:
     return total
 
 
+def display_media_name(path: str | Path) -> str:
+    """Return only the filename for media list display."""
+    return re.split(r"[/\\]+", str(path))[-1]
+
+
 def format_duration(seconds: float | None) -> str:
     if seconds is None:
         return "durasi tidak terbaca"
@@ -217,7 +223,7 @@ WEB_INDEX_HTML = """<!doctype html>
     :root{--bg:#eef2f7;--card:#fff;--muted:#64748b;--text:#111827;--primary:#2563eb;--danger:#dc2626;--border:#d8dee9}
     *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",Arial,sans-serif}
     .app{max-width:1180px;margin:0 auto;padding:22px}.hero{background:#1e3a8a;color:white;border-radius:18px;padding:22px 24px;margin-bottom:16px;box-shadow:0 18px 40px #1e293b22}.hero p{color:#dbeafe;margin:5px 0 0}.tabs{display:flex;gap:8px;margin-bottom:14px}.tab{border:1px solid var(--border);background:var(--card);padding:12px 18px;border-radius:999px;font-weight:700;cursor:pointer}.tab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
-    .panel{display:none}.panel.active{display:block}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 8px 20px #3341550d}h1,h2,h3{margin:0 0 10px}label{font-weight:700}.row{display:flex;gap:8px;align-items:center;margin:10px 0}.grow{flex:1}input[type=text],select{width:100%;border:1px solid var(--border);border-radius:10px;padding:10px;background:white}.list{height:180px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:#f8fafc;padding:8px}.item{padding:7px 9px;border-radius:8px;margin-bottom:4px;word-break:break-all}.item:hover{background:#e0e7ff}.item.selected{background:#2563eb;color:#fff}button{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px 13px;font-weight:700;cursor:pointer}button.primary{background:var(--primary);border-color:var(--primary);color:#fff}button.danger{color:var(--danger)}.options{display:grid;gap:8px}.muted{color:var(--muted);font-weight:400}.status{margin-top:14px}.bar{height:14px;border-radius:999px;background:#dbeafe;overflow:hidden}.fill{height:100%;width:0;background:var(--primary);transition:width .2s}.log{height:165px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:14px;padding:12px;font-family:Consolas,monospace;white-space:pre-wrap}.hidden{display:none}@media(max-width:800px){.grid{grid-template-columns:1fr}.app{padding:12px}}
+    .panel{display:none}.panel.active{display:block}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.merge-options{display:grid;grid-template-columns:1.4fr 1.2fr auto;gap:14px;align-items:start;margin-top:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 8px 20px #3341550d}h1,h2,h3{margin:0 0 10px}label{font-weight:700}.row{display:flex;gap:8px;align-items:center;margin:10px 0}.grow{flex:1}input[type=text],select{width:100%;border:1px solid var(--border);border-radius:10px;padding:10px;background:white}.list{height:180px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:#f8fafc;padding:8px}.item{padding:7px 9px;border-radius:8px;margin-bottom:4px;word-break:break-word}.item:hover{background:#e0e7ff}.item.selected{background:#2563eb;color:#fff}button{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px 13px;font-weight:700;cursor:pointer}button.primary{background:var(--primary);border-color:var(--primary);color:#fff}button.danger{color:var(--danger)}.options{display:grid;gap:8px}.actions{display:flex;flex-direction:column;gap:10px;min-width:150px}.muted{color:var(--muted);font-weight:400}.status{margin-top:14px}.bar{height:14px;border-radius:999px;background:#dbeafe;overflow:hidden}.fill{height:100%;width:0;background:var(--primary);transition:width .2s}.log{height:165px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:14px;padding:12px;font-family:Consolas,monospace;white-space:pre-wrap}.hidden{display:none}@media(max-width:900px){.grid,.merge-options{grid-template-columns:1fr}.app{padding:12px}}
   </style>
 </head>
 <body><main class="app">
@@ -226,10 +232,11 @@ WEB_INDEX_HTML = """<!doctype html>
   <section id="merge" class="panel active">
     <div class="grid"><div class="card"><h3>Daftar Video</h3><div id="videos" class="list"></div><div class="row"><button onclick="chooseVideos()">Tambah</button><button onclick="removeSelected('videos')">Hapus Terpilih</button><button onclick="shuffleList('videos')">Acak</button></div></div>
     <div class="card"><h3>Daftar Audio</h3><div id="audios" class="list"></div><div class="row"><button onclick="chooseAudios()">Tambah</button><button onclick="removeSelected('audios')">Hapus Terpilih</button><button onclick="shuffleList('audios')">Acak</button></div></div></div>
-    <div class="card"><div class="row"><label>Output</label><input id="output" class="grow" type="text"><button onclick="chooseOutput()">Pilih...</button></div>
-      <h3>Penyesuaian durasi</h3><div class="options"><label><input type="radio" name="duration" value="shortest" checked> Selesai di durasi terpendek</label><label><input type="radio" name="duration" value="video"> Ikuti durasi video</label><label><input type="radio" name="duration" value="audio"> Ikuti durasi audio</label></div>
-      <div class="grid"><label>Audio asli video <input id="videoVolume" type="range" min="0" max="100" value="0"></label><label>Audio baru <input id="audioVolume" type="range" min="0" max="150" value="100"></label></div><label><input id="overwrite" type="checkbox" checked> Timpa file output jika sudah ada</label>
-      <div class="row"><button class="primary" onclick="startMerge()">Gabungkan Sekarang</button><button onclick="shuffleAll()">Acak Semua</button></div></div>
+    <div class="merge-options">
+      <div class="card"><h3>Output</h3><div class="row"><input id="output" class="grow" type="text"><button onclick="chooseOutput()">Pilih...</button></div><label><input id="overwrite" type="checkbox" checked> Timpa file output jika sudah ada</label></div>
+      <div class="card"><h3>Penyesuaian durasi</h3><div class="options"><label><input type="radio" name="duration" value="shortest" checked> Selesai di durasi terpendek</label><label><input type="radio" name="duration" value="video"> Ikuti durasi video</label><label><input type="radio" name="duration" value="audio"> Ikuti durasi audio</label></div><div class="grid"><label>Audio asli video <input id="videoVolume" type="range" min="0" max="100" value="0"></label><label>Audio baru <input id="audioVolume" type="range" min="0" max="150" value="100"></label></div></div>
+      <div class="card"><h3>Aksi</h3><div class="actions"><button class="primary" onclick="startMerge()">Gabungkan Sekarang</button><button onclick="shuffleAll()">Acak Semua</button></div></div>
+    </div>
   </section>
   <section id="download" class="panel"><div class="card"><div class="row"><label>URL Playlist</label><input id="playlistUrl" class="grow" type="text"><button onclick="loadPlaylist()">Muat Playlist</button><button onclick="addUrl()">Tambah URL</button></div><div class="row"><label>Folder</label><input id="downloadDir" class="grow" type="text"><button onclick="chooseDownloadDir()">Pilih...</button></div><div class="row"><label><input type="radio" name="format" value="video" checked> Video MP4 terbaik</label><label><input type="radio" name="format" value="audio"> Audio MP3 saja</label></div></div><div class="grid"><div class="card"><h3>Antrian Download</h3><div id="queue" class="list"></div><button onclick="removeSelected('queue')">Hapus Terpilih</button></div><div class="card"><h3>Sudah Terdownload</h3><div id="done" class="list"></div></div></div><div class="row"><button class="primary" onclick="startDownload()">Download Antrian</button></div></section>
   <section class="status"><div class="bar"><div id="progress" class="fill"></div></div><p id="status">Memuat aplikasi...</p><div id="log" class="log"></div></section>
@@ -240,7 +247,8 @@ let state={video_files:[],audio_files:[],download_queue_items:[],downloaded_item
 const selected={videos:new Set(),audios:new Set(),queue:new Set()};
 async function api(path, data){const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}); const j=await r.json(); if(!r.ok||j.error){alert(j.error||'Permintaan gagal');} await refresh(); return j;}
 async function refresh(){const r=await fetch('/api/state'); state=await r.json(); render();}
-function renderList(id, values){const box=document.getElementById(id); box.innerHTML=''; values.forEach((v,i)=>{const d=document.createElement('div'); d.className='item '+(selected[id]?.has(i)?'selected':''); d.textContent=(i+1)+'. '+(v.title||v); d.onclick=()=>{selected[id].has(i)?selected[id].delete(i):selected[id].add(i); render();}; box.appendChild(d);});}
+function fileName(value){return String(value).split(/[\\/]/).pop();}
+function renderList(id, values){const box=document.getElementById(id); box.innerHTML=''; values.forEach((v,i)=>{const d=document.createElement('div'); d.className='item '+(selected[id]?.has(i)?'selected':''); const text=(id==='videos'||id==='audios')?fileName(v):(v.title||v); d.textContent=(i+1)+'. '+text; d.title=(v.title||v); d.onclick=()=>{selected[id].has(i)?selected[id].delete(i):selected[id].add(i); render();}; box.appendChild(d);});}
 function render(){document.getElementById('mode').textContent='Mode: '+state.mode; renderList('videos',state.video_files); renderList('audios',state.audio_files); renderList('queue',state.download_queue_items); renderList('done',state.downloaded_items); document.getElementById('downloadDir').value=state.download_dir||''; const out=document.getElementById('output'); if(document.activeElement!==out) out.value=state.output_path||out.value; document.getElementById('status').textContent=state.status||''; document.getElementById('progress').style.width=(state.progress||0)+'%'; document.getElementById('log').textContent=(state.log||[]).join('\n'); document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;}
 async function chooseVideos(){const paths=await window.pywebview.api.choose_videos(); if(paths?.length) await api('add_media',{kind:'video',paths});}
 async function chooseAudios(){const paths=await window.pywebview.api.choose_audios(); if(paths?.length) await api('add_media',{kind:'audio',paths});}
@@ -599,7 +607,7 @@ class MergerApp:
             return
         listbox.delete(0, END)
         for index, path in enumerate(paths, start=1):
-            listbox.insert(END, f"{index}. {path}")
+            listbox.insert(END, f"{index}. {display_media_name(path)}")
 
     def _choose_output(self) -> None:
         path = filedialog.asksaveasfilename(title="Simpan hasil", defaultextension=".mp4", filetypes=OUTPUT_EXTENSIONS)

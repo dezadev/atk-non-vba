@@ -25,6 +25,10 @@ class FakeListbox:
 
 
 class VideoAudioMergerTests(TestCase):
+    def test_display_media_name_uses_filename_only(self):
+        self.assertEqual(merger.display_media_name(Path("/tmp/example/video.mp4")), "video.mp4")
+        self.assertEqual(merger.display_media_name(r"C:\\Users\\me\\audio.mp3"), "audio.mp3")
+
     def test_format_duration_includes_hours_only_when_needed(self):
         self.assertEqual(merger.format_duration(None), "durasi tidak terbaca")
         self.assertEqual(merger.format_duration(125.2), "02:05")
