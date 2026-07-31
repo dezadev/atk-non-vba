@@ -1,9 +1,14 @@
-## Aplikasi Desktop Penggabung Video & Audio
+## Aplikasi Web Lokal Penggabung Video & Audio
 
-Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.14**, **Tkinter**, **FFmpeg**, dan opsional **yt-dlp** untuk menggabungkan file video/audio serta mengunduh playlist YouTube.
+Repository ini menyediakan aplikasi berbasis **Web Lokal (Offline)** yang berjalan di komputer Windows seperti aplikasi desktop. Saat `video_audio_merger.py` dijalankan, aplikasi otomatis menyalakan server lokal di `127.0.0.1` dan langsung membukanya dengan **PyWebView**, sehingga tampil tanpa address bar browser.
+
+Aplikasi tetap mempertahankan fungsi utama yang sudah ada: menggabungkan video/audio lokal memakai **FFmpeg** dan mengunduh antrian/playlist YouTube memakai **yt-dlp** bila tersedia.
 
 ### Fitur
 
+- UI web lokal offline tanpa CDN atau aset internet eksternal.
+- Server lokal otomatis aktif saat file Python dijalankan.
+- Tampilan desktop melalui PyWebView, tanpa address bar browser.
 - Mengelola daftar file video dan audio melalui list yang dapat ditambah, dipilih beberapa itemnya, dihapus, dan diacak urutannya.
 - Menggabungkan banyak video secara berurutan dan banyak audio secara berurutan menggunakan FFmpeg, termasuk opsi acak agar hasil setiap proses bisa berbeda.
 - Mode penyesuaian durasi:
@@ -11,15 +16,53 @@ Repository ini juga menyediakan aplikasi desktop sederhana berbasis **Python 3.1
   - **Ikuti durasi video**: audio baru dipotong atau di-loop otomatis sampai durasi video cukup.
   - **Ikuti durasi audio**: video dipotong atau di-loop otomatis sampai durasi audio cukup.
 - Pengaturan volume audio asli video dan audio baru.
-- Tampilan desktop berbahasa Indonesia dengan tema profesional, header yang lebih rapi, tombol aksi utama yang menonjol, dan area daftar/log yang lebih mudah dipindai.
-- Progress bar saat proses berjalan dan popup notifikasi ketika proses selesai atau gagal.
+- Progress bar saat proses berjalan dan log proses di dalam aplikasi.
 - Download playlist YouTube melalui tab **Download YouTube** menggunakan `yt-dlp`, lengkap dengan pemuatan daftar lagu/video satu per satu, list antrian download, dan list item yang sudah terdownload.
 - Pilihan download playlist sebagai video MP4 terbaik atau audio MP3 saja.
+
+### Mode Aplikasi
+
+Aplikasi dapat dijalankan dalam dua mode:
+
+#### Mode Development
+
+Mode ini mengaktifkan debug PyWebView dan menampilkan log request HTTP server di terminal. Mode ini cocok untuk pengembangan UI atau debugging.
+
+```bash
+python video_audio_merger.py --mode development
+```
+
+Opsional, jika ingin membuka URL lokal di browser biasa selain jendela PyWebView:
+
+```bash
+set ATK_OPEN_BROWSER=1
+python video_audio_merger.py --mode development
+```
+
+#### Mode Production
+
+Mode ini adalah mode default. Server lokal tetap berjalan otomatis, tetapi debug dimatikan dan aplikasi langsung tampil sebagai jendela desktop PyWebView.
+
+```bash
+python video_audio_merger.py
+```
+
+Atau eksplisit:
+
+```bash
+python video_audio_merger.py --mode production
+```
 
 ### Prasyarat
 
 1. Install Python 3.14 atau versi lebih baru.
-2. Install FFmpeg dan pastikan perintah berikut bisa dijalankan dari terminal:
+2. Install dependensi Python lokal:
+
+```bash
+pip install -r requirements.txt
+```
+
+3. Install FFmpeg dan pastikan perintah berikut bisa dijalankan dari terminal:
 
 ```bash
 ffmpeg -version
@@ -28,17 +71,15 @@ ffprobe -version
 
 `ffprobe` digunakan untuk membaca durasi media. Aplikasi tetap bisa berjalan tanpa `ffprobe`, tetapi informasi durasi tidak akan tampil.
 
-3. Untuk fitur download playlist YouTube, install `yt-dlp` dan pastikan perintah berikut bisa dijalankan dari terminal:
+4. Untuk fitur download playlist YouTube, install `yt-dlp` dan pastikan perintah berikut bisa dijalankan dari terminal:
 
 ```bash
 yt-dlp --version
 ```
 
-### Cara Menjalankan
+> Catatan offline: fitur penggabungan file lokal berjalan tanpa koneksi internet. Fitur YouTube tetap membutuhkan koneksi internet saat mengambil metadata atau mengunduh video/audio.
 
-```bash
-python video_audio_merger.py
-```
+### Cara Menggunakan
 
 Setelah aplikasi terbuka, gunakan tab **Gabung Media** untuk menggabungkan file lokal:
 
@@ -49,7 +90,7 @@ Setelah aplikasi terbuka, gunakan tab **Gabung Media** untuk menggabungkan file 
 5. Tentukan file **Output**.
 6. Pilih mode penyesuaian durasi.
 7. Atur volume jika diperlukan.
-8. Klik **Gabungkan Sekarang** dan pantau progress bar sampai popup selesai muncul.
+8. Klik **Gabungkan Sekarang** dan pantau progress bar/log sampai proses selesai.
 
 Gunakan tab **Download YouTube** untuk mengunduh playlist:
 
@@ -59,8 +100,16 @@ Gunakan tab **Download YouTube** untuk mengunduh playlist:
 4. Gunakan **Hapus Terpilih** untuk membuang item tertentu dari antrian.
 5. Pilih folder download lokal.
 6. Pilih format **Video MP4 terbaik** atau **Audio MP3 saja**.
-7. Klik **Download Antrian** dan pantau log/progress sampai popup selesai muncul.
+7. Klik **Download Antrian** dan pantau log/progress sampai selesai.
 8. Item yang selesai diproses akan dipindahkan satu per satu ke list **Sudah Terdownload**.
+
+### Kompatibilitas Darurat
+
+UI Tkinter lama masih tersedia sebagai fallback bila diperlukan:
+
+```bash
+python video_audio_merger.py --legacy-tk
+```
 
 ### Catatan Output
 
