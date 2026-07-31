@@ -7,17 +7,22 @@ and Indonesian-language for easy local use.
 """
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import queue
 import random
 import shutil
 import subprocess
 import tempfile
 import threading
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from tkinter import END, EXTENDED, BooleanVar, DoubleVar, IntVar, Listbox, StringVar, Tk, filedialog, messagebox, ttk
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
+from urllib.parse import urlparse
 
 APP_TITLE = "Toolkit Video & Audio (FFmpeg + yt-dlp)"
 VIDEO_EXTENSIONS = (("Video", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Semua file", "*.*"))
@@ -200,6 +205,56 @@ def parse_youtube_playlist_items(metadata_json: str) -> list[DownloadItem]:
         if url:
             items.append(DownloadItem(title=title, url=str(url)))
     return items
+
+
+WEB_INDEX_HTML = """<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toolkit Video & Audio</title>
+  <style>
+    :root{--bg:#eef2f7;--card:#fff;--muted:#64748b;--text:#111827;--primary:#2563eb;--danger:#dc2626;--border:#d8dee9}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",Arial,sans-serif}
+    .app{max-width:1180px;margin:0 auto;padding:22px}.hero{background:#1e3a8a;color:white;border-radius:18px;padding:22px 24px;margin-bottom:16px;box-shadow:0 18px 40px #1e293b22}.hero p{color:#dbeafe;margin:5px 0 0}.tabs{display:flex;gap:8px;margin-bottom:14px}.tab{border:1px solid var(--border);background:var(--card);padding:12px 18px;border-radius:999px;font-weight:700;cursor:pointer}.tab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .panel{display:none}.panel.active{display:block}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 8px 20px #3341550d}h1,h2,h3{margin:0 0 10px}label{font-weight:700}.row{display:flex;gap:8px;align-items:center;margin:10px 0}.grow{flex:1}input[type=text],select{width:100%;border:1px solid var(--border);border-radius:10px;padding:10px;background:white}.list{height:180px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:#f8fafc;padding:8px}.item{padding:7px 9px;border-radius:8px;margin-bottom:4px;word-break:break-all}.item:hover{background:#e0e7ff}.item.selected{background:#2563eb;color:#fff}button{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px 13px;font-weight:700;cursor:pointer}button.primary{background:var(--primary);border-color:var(--primary);color:#fff}button.danger{color:var(--danger)}.options{display:grid;gap:8px}.muted{color:var(--muted);font-weight:400}.status{margin-top:14px}.bar{height:14px;border-radius:999px;background:#dbeafe;overflow:hidden}.fill{height:100%;width:0;background:var(--primary);transition:width .2s}.log{height:165px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:14px;padding:12px;font-family:Consolas,monospace;white-space:pre-wrap}.hidden{display:none}@media(max-width:800px){.grid{grid-template-columns:1fr}.app{padding:12px}}
+  </style>
+</head>
+<body><main class="app">
+  <section class="hero"><h1>Toolkit Video & Audio</h1><p>Aplikasi web lokal offline untuk FFmpeg dan yt-dlp. Server berjalan di komputer ini dan ditampilkan melalui PyWebView.</p><p id="mode" class="muted"></p></section>
+  <nav class="tabs"><button class="tab active" data-tab="merge">Gabung Media</button><button class="tab" data-tab="download">Download YouTube</button></nav>
+  <section id="merge" class="panel active">
+    <div class="grid"><div class="card"><h3>Daftar Video</h3><div id="videos" class="list"></div><div class="row"><button onclick="chooseVideos()">Tambah</button><button onclick="removeSelected('videos')">Hapus Terpilih</button><button onclick="shuffleList('videos')">Acak</button></div></div>
+    <div class="card"><h3>Daftar Audio</h3><div id="audios" class="list"></div><div class="row"><button onclick="chooseAudios()">Tambah</button><button onclick="removeSelected('audios')">Hapus Terpilih</button><button onclick="shuffleList('audios')">Acak</button></div></div></div>
+    <div class="card"><div class="row"><label>Output</label><input id="output" class="grow" type="text"><button onclick="chooseOutput()">Pilih...</button></div>
+      <h3>Penyesuaian durasi</h3><div class="options"><label><input type="radio" name="duration" value="shortest" checked> Selesai di durasi terpendek</label><label><input type="radio" name="duration" value="video"> Ikuti durasi video</label><label><input type="radio" name="duration" value="audio"> Ikuti durasi audio</label></div>
+      <div class="grid"><label>Audio asli video <input id="videoVolume" type="range" min="0" max="100" value="0"></label><label>Audio baru <input id="audioVolume" type="range" min="0" max="150" value="100"></label></div><label><input id="overwrite" type="checkbox" checked> Timpa file output jika sudah ada</label>
+      <div class="row"><button class="primary" onclick="startMerge()">Gabungkan Sekarang</button><button onclick="shuffleAll()">Acak Semua</button></div></div>
+  </section>
+  <section id="download" class="panel"><div class="card"><div class="row"><label>URL Playlist</label><input id="playlistUrl" class="grow" type="text"><button onclick="loadPlaylist()">Muat Playlist</button><button onclick="addUrl()">Tambah URL</button></div><div class="row"><label>Folder</label><input id="downloadDir" class="grow" type="text"><button onclick="chooseDownloadDir()">Pilih...</button></div><div class="row"><label><input type="radio" name="format" value="video" checked> Video MP4 terbaik</label><label><input type="radio" name="format" value="audio"> Audio MP3 saja</label></div></div><div class="grid"><div class="card"><h3>Antrian Download</h3><div id="queue" class="list"></div><button onclick="removeSelected('queue')">Hapus Terpilih</button></div><div class="card"><h3>Sudah Terdownload</h3><div id="done" class="list"></div></div></div><div class="row"><button class="primary" onclick="startDownload()">Download Antrian</button></div></section>
+  <section class="status"><div class="bar"><div id="progress" class="fill"></div></div><p id="status">Memuat aplikasi...</p><div id="log" class="log"></div></section>
+</main><script src="/app.js"></script></body></html>"""
+
+WEB_APP_JS = r"""
+let state={video_files:[],audio_files:[],download_queue_items:[],downloaded_items:[],status:'',progress:0,log:[],mode:''};
+const selected={videos:new Set(),audios:new Set(),queue:new Set()};
+async function api(path, data){const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}); const j=await r.json(); if(!r.ok||j.error){alert(j.error||'Permintaan gagal');} await refresh(); return j;}
+async function refresh(){const r=await fetch('/api/state'); state=await r.json(); render();}
+function renderList(id, values){const box=document.getElementById(id); box.innerHTML=''; values.forEach((v,i)=>{const d=document.createElement('div'); d.className='item '+(selected[id]?.has(i)?'selected':''); d.textContent=(i+1)+'. '+(v.title||v); d.onclick=()=>{selected[id].has(i)?selected[id].delete(i):selected[id].add(i); render();}; box.appendChild(d);});}
+function render(){document.getElementById('mode').textContent='Mode: '+state.mode; renderList('videos',state.video_files); renderList('audios',state.audio_files); renderList('queue',state.download_queue_items); renderList('done',state.downloaded_items); document.getElementById('downloadDir').value=state.download_dir||''; const out=document.getElementById('output'); if(document.activeElement!==out) out.value=state.output_path||out.value; document.getElementById('status').textContent=state.status||''; document.getElementById('progress').style.width=(state.progress||0)+'%'; document.getElementById('log').textContent=(state.log||[]).join('\n'); document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;}
+async function chooseVideos(){const paths=await window.pywebview.api.choose_videos(); if(paths?.length) await api('add_media',{kind:'video',paths});}
+async function chooseAudios(){const paths=await window.pywebview.api.choose_audios(); if(paths?.length) await api('add_media',{kind:'audio',paths});}
+async function chooseOutput(){const path=await window.pywebview.api.choose_output(); if(path) document.getElementById('output').value=path;}
+async function chooseDownloadDir(){const path=await window.pywebview.api.choose_download_dir(); if(path) await api('set_download_dir',{path});}
+function removeSelected(kind){api('remove',{kind,indices:[...selected[kind]]}); selected[kind].clear();}
+function shuffleList(kind){api('shuffle',{kind});} function shuffleAll(){api('shuffle',{kind:'all'});} function val(n){return document.querySelector('input[name='+n+']:checked').value;}
+function startMerge(){api('merge',{output:document.getElementById('output').value,duration_mode:val('duration'),video_volume:+document.getElementById('videoVolume').value,audio_volume:+document.getElementById('audioVolume').value,overwrite:document.getElementById('overwrite').checked});}
+function addUrl(){api('add_url',{url:document.getElementById('playlistUrl').value}); document.getElementById('playlistUrl').value='';}
+function loadPlaylist(){api('load_playlist',{url:document.getElementById('playlistUrl').value});}
+function startDownload(){api('download',{url:document.getElementById('playlistUrl').value,media_format:val('format')});}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.panel').forEach(x=>x.classList.remove('active')); b.classList.add('active'); document.getElementById(b.dataset.tab).classList.add('active');});
+refresh(); setInterval(refresh,1000);
+"""
 
 
 class MergerApp:
@@ -891,10 +946,370 @@ class MergerApp:
         self.log.yview_moveto(1)
 
 
+class SimpleVar:
+    """Small variable wrapper matching Tkinter Variable.get for shared command builders."""
+
+    def __init__(self, value: Any = None) -> None:
+        self.value = value
+
+    def get(self) -> Any:
+        return self.value
+
+    def set(self, value: Any) -> None:
+        self.value = value
+
+
+class WebMergerApp:
+    """Headless application state used by the local web UI."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.video_files: list[Path] = []
+        self.audio_files: list[Path] = []
+        self.download_queue_items: list[DownloadItem] = []
+        self.downloaded_items: list[DownloadItem] = []
+        self.output_path = SimpleVar("")
+        self.playlist_url = SimpleVar("")
+        self.download_dir = SimpleVar(str(Path.home() / "Downloads"))
+        self.download_format = SimpleVar("video")
+        self.duration_mode = SimpleVar("shortest")
+        self.video_volume = SimpleVar(0)
+        self.audio_volume = SimpleVar(100)
+        self.overwrite = SimpleVar(True)
+        self.status = "Pilih file video dan audio untuk mulai."
+        self.progress = 0.0
+        self.logs: list[str] = []
+        self.lock = threading.Lock()
+        self._check_tools()
+
+    def _check_tools(self) -> None:
+        missing = [tool for tool in ("ffmpeg", "yt-dlp") if not find_tool(tool)]
+        if missing:
+            self.status = "Tool belum ditemukan di PATH: " + ", ".join(missing)
+            self._add_log(self.status)
+
+    def state(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "mode": self.mode,
+                "video_files": [str(path) for path in self.video_files],
+                "audio_files": [str(path) for path in self.audio_files],
+                "download_queue_items": [item.__dict__ for item in self.download_queue_items],
+                "downloaded_items": [item.__dict__ for item in self.downloaded_items],
+                "download_dir": self.download_dir.get(),
+                "output_path": self.output_path.get(),
+                "status": self.status,
+                "progress": self.progress,
+                "log": self.logs[-250:],
+            }
+
+    def add_media(self, kind: str, paths: Sequence[str]) -> None:
+        files = [Path(path) for path in paths]
+        with self.lock:
+            if kind == "video":
+                self.video_files.extend(files)
+                if not self.output_path.get() and self.video_files:
+                    video = self.video_files[0]
+                    self.output_path.set(str(video.with_name(f"{video.stem}_gabung_audio.mp4")))
+            elif kind == "audio":
+                self.audio_files.extend(files)
+            else:
+                raise ValueError("Jenis media tidak valid.")
+        self._add_log(f"{kind.title()}: {len(files)} file ditambahkan.")
+
+    def remove(self, kind: str, indices: Sequence[int]) -> None:
+        selected = set(indices)
+        with self.lock:
+            if kind == "videos":
+                self.video_files = [path for index, path in enumerate(self.video_files) if index not in selected]
+            elif kind == "audios":
+                self.audio_files = [path for index, path in enumerate(self.audio_files) if index not in selected]
+            elif kind == "queue":
+                self.download_queue_items = [item for index, item in enumerate(self.download_queue_items) if index not in selected]
+            else:
+                raise ValueError("Jenis daftar tidak valid.")
+
+    def shuffle(self, kind: str) -> None:
+        with self.lock:
+            if kind in ("videos", "all"):
+                random.shuffle(self.video_files)
+            if kind in ("audios", "all"):
+                random.shuffle(self.audio_files)
+        self._add_log("Urutan media diacak.")
+
+    def add_url(self, url: str) -> None:
+        clean_url = url.strip()
+        if not clean_url:
+            raise ValueError("URL playlist YouTube belum diisi.")
+        with self.lock:
+            self.download_queue_items.append(DownloadItem(title=clean_url, url=clean_url))
+        self._add_log("URL ditambahkan ke antrian download.")
+
+    def load_playlist(self, url: str) -> None:
+        self.playlist_url.set(url)
+        command = MergerApp._build_playlist_probe_command(self)  # reuse validated builder
+        self.status = "Memuat daftar lagu/video dari playlist..."
+        self._add_log("Mengambil daftar item playlist dengan yt-dlp...")
+        threading.Thread(target=self._load_playlist_items, args=(command,), daemon=True).start()
+
+    def start_merge(self, data: dict[str, Any]) -> None:
+        self.output_path.set(str(data.get("output", "")))
+        self.duration_mode.set(str(data.get("duration_mode", "shortest")))
+        self.video_volume.set(int(data.get("video_volume", 0)))
+        self.audio_volume.set(int(data.get("audio_volume", 100)))
+        self.overwrite.set(bool(data.get("overwrite", True)))
+        command, expected_duration, cleanup_paths = MergerApp._build_ffmpeg_command(self)
+        self.progress = 0
+        self.status = "Memproses... jangan tutup aplikasi."
+        self._add_log("Menjalankan FFmpeg...")
+        threading.Thread(target=self._run_merge, args=(command, expected_duration, cleanup_paths), daemon=True).start()
+
+    def start_download(self, url: str, media_format: str) -> None:
+        self.playlist_url.set(url)
+        self.download_format.set(media_format)
+        commands = MergerApp._build_playlist_download_commands(self)
+        self.progress = 0
+        self.status = "Mengunduh antrian playlist... jangan tutup aplikasi."
+        self._add_log("Menjalankan yt-dlp untuk antrian download...")
+        threading.Thread(target=self._run_playlist_downloads, args=(commands,), daemon=True).start()
+
+    _queued_download_items = MergerApp._queued_download_items
+    _expected_duration = MergerApp._expected_duration
+    _build_ffmpeg_command = MergerApp._build_ffmpeg_command
+    _build_playlist_download_commands = MergerApp._build_playlist_download_commands
+    _build_playlist_probe_command = MergerApp._build_playlist_probe_command
+
+    def _load_playlist_items(self, command: list[str]) -> None:
+        result = run_command(command)
+        if result.returncode != 0:
+            self._fail(result.stderr.strip() or result.stdout.strip() or "yt-dlp gagal membaca playlist.")
+            return
+        try:
+            items = parse_youtube_playlist_items(result.stdout)
+        except json.JSONDecodeError as exc:
+            self._fail(f"Metadata playlist tidak valid: {exc}")
+            return
+        with self.lock:
+            self.download_queue_items.extend(items)
+            self.status = f"Berhasil memuat {len(items)} item ke antrian download."
+        self._add_log(self.status)
+
+    def _run_merge(self, command: list[str], expected_duration: float | None, cleanup_paths: Sequence[Path]) -> None:
+        try:
+            MergerApp._run_merge(self, command, expected_duration, cleanup_paths)
+        except Exception as exc:
+            self._fail(str(exc))
+
+    def _run_playlist_downloads(self, commands: Sequence[tuple[DownloadItem, list[str]]]) -> None:
+        for item, command in commands:
+            if not self._run_playlist_download(item, command):
+                return
+        self._set_progress(100)
+        self.status = "Antrian playlist berhasil diunduh."
+        self._add_log(self.status)
+
+    def _run_playlist_download(self, item: DownloadItem, command: list[str]) -> bool:
+        return MergerApp._run_playlist_download(self, item, command)
+
+    def _handle_progress_line(self, line: str, expected_duration: float | None) -> None:
+        if expected_duration is None or expected_duration <= 0 or not line.startswith("out_time_ms="):
+            return
+        try:
+            encoded_seconds = int(line.split("=", 1)[1]) / 1_000_000
+        except ValueError:
+            return
+        self._set_progress(min(99.0, max(0.0, encoded_seconds / expected_duration * 100)))
+
+    def _handle_download_line(self, line: str) -> None:
+        if line.startswith("download:"):
+            try:
+                self._set_progress(float(line.removeprefix("download:").strip().rstrip("%")))
+            except ValueError:
+                pass
+        elif line:
+            self._add_log(line)
+
+    def _mark_download_done(self, payload: str) -> None:
+        data = json.loads(payload)
+        item = DownloadItem(title=str(data["title"]), url=str(data["url"]))
+        with self.lock:
+            self.downloaded_items.append(item)
+            self.download_queue_items = [queued for queued in self.download_queue_items if queued.url != item.url]
+        self._add_log(f"Selesai download: {item.title}")
+
+    def _set_progress(self, percent: float) -> None:
+        with self.lock:
+            self.progress = round(percent, 1)
+
+    def _add_log(self, message: str) -> None:
+        with self.lock:
+            self.logs.append(message)
+
+    def _fail(self, message: str) -> None:
+        with self.lock:
+            self.status = "Proses gagal. Lihat log."
+        self._add_log(message)
+
+    @property
+    def log_queue(self):
+        class QueueProxy:
+            def __init__(self, app: WebMergerApp) -> None:
+                self.app = app
+            def put(self, message: str) -> None:
+                if message.startswith("PROGRESS::"):
+                    self.app._set_progress(float(message.removeprefix("PROGRESS::")))
+                elif message.startswith("SELESAI::"):
+                    self.app.status = message.removeprefix("SELESAI::")
+                    self.app._add_log(self.app.status)
+                elif message.startswith("GAGAL::"):
+                    self.app._fail(message.removeprefix("GAGAL::"))
+                elif message.startswith("DOWNLOAD_DONE::"):
+                    self.app._mark_download_done(message.removeprefix("DOWNLOAD_DONE::"))
+                elif message.startswith("LOG::"):
+                    self.app._add_log(message.removeprefix("LOG::"))
+        return QueueProxy(self)
+
+
+class LocalWebHandler(BaseHTTPRequestHandler):
+    app_state: WebMergerApp
+
+    def log_message(self, format: str, *args: Any) -> None:
+        if self.app_state.mode == "development":
+            super().log_message(format, *args)
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/":
+            self._send(200, WEB_INDEX_HTML, "text/html; charset=utf-8")
+        elif path == "/app.js":
+            self._send(200, WEB_APP_JS, "application/javascript; charset=utf-8")
+        elif path == "/api/state":
+            self._json(200, self.app_state.state())
+        else:
+            self._json(404, {"error": "Halaman tidak ditemukan."})
+
+    def do_POST(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            data = json.loads(self.rfile.read(length) or b"{}")
+            self._route_post(urlparse(self.path).path, data)
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._json(500, {"error": str(exc)})
+
+    def _route_post(self, path: str, data: dict[str, Any]) -> None:
+        app = self.app_state
+        if path == "/api/add_media":
+            app.add_media(str(data.get("kind", "")), data.get("paths", []))
+        elif path == "/api/remove":
+            app.remove(str(data.get("kind", "")), [int(i) for i in data.get("indices", [])])
+        elif path == "/api/shuffle":
+            app.shuffle(str(data.get("kind", "")))
+        elif path == "/api/add_url":
+            app.add_url(str(data.get("url", "")))
+        elif path == "/api/load_playlist":
+            app.load_playlist(str(data.get("url", "")))
+        elif path == "/api/set_download_dir":
+            app.download_dir.set(str(data.get("path", "")))
+        elif path == "/api/merge":
+            app.start_merge(data)
+        elif path == "/api/download":
+            app.start_download(str(data.get("url", "")), str(data.get("media_format", "video")))
+        else:
+            self._json(404, {"error": "Endpoint tidak ditemukan."})
+            return
+        self._json(200, {"ok": True})
+
+    def _json(self, code: int, payload: dict[str, Any]) -> None:
+        self._send(code, json.dumps(payload), "application/json; charset=utf-8")
+
+    def _send(self, code: int, body: str, content_type: str) -> None:
+        data = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class PyWebViewApi:
+    """Native file dialogs exposed to JavaScript through PyWebView."""
+
+    def __init__(self) -> None:
+        self.window: Any = None
+
+    def choose_videos(self) -> list[str]:
+        return self._ask_open_filenames("Pilih video", VIDEO_EXTENSIONS)
+
+    def choose_audios(self) -> list[str]:
+        return self._ask_open_filenames("Pilih audio", AUDIO_EXTENSIONS)
+
+    def choose_output(self) -> str:
+        root = self._dialog_root()
+        try:
+            return filedialog.asksaveasfilename(
+                parent=root,
+                title="Simpan hasil",
+                defaultextension=".mp4",
+                filetypes=OUTPUT_EXTENSIONS,
+            )
+        finally:
+            root.destroy()
+
+    def choose_download_dir(self) -> str:
+        root = self._dialog_root()
+        try:
+            return filedialog.askdirectory(parent=root, title="Pilih folder download")
+        finally:
+            root.destroy()
+
+    def _ask_open_filenames(self, title: str, filetypes: Sequence[tuple[str, str]]) -> list[str]:
+        root = self._dialog_root()
+        try:
+            return list(filedialog.askopenfilenames(parent=root, title=title, filetypes=filetypes))
+        finally:
+            root.destroy()
+
+    def _dialog_root(self) -> Tk:
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        return root
+
+
+def run_local_web_app(mode: str) -> None:
+    app_state = WebMergerApp(mode)
+    LocalWebHandler.app_state = app_state
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LocalWebHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{port}/"
+    if mode == "development":
+        app_state._add_log(f"Server development aktif di {url}")
+    try:
+        import webview
+    except ImportError as exc:
+        raise SystemExit("PyWebView belum terinstall. Jalankan: pip install pywebview") from exc
+    api = PyWebViewApi()
+    window = webview.create_window(APP_TITLE, url, js_api=api, width=1100, height=760)
+    api.window = window
+    if mode == "development" and os.environ.get("ATK_OPEN_BROWSER") == "1":
+        webbrowser.open(url)
+    webview.start(debug=mode == "development")
+    server.shutdown()
+
 def main() -> None:
-    root = Tk()
-    MergerApp(root)
-    root.mainloop()
+    parser = argparse.ArgumentParser(description="Jalankan aplikasi web lokal offline.")
+    parser.add_argument("--mode", choices=("development", "production"), default=os.environ.get("ATK_MODE", "production"))
+    parser.add_argument("--legacy-tk", action="store_true", help="Jalankan UI Tkinter lama untuk kompatibilitas darurat.")
+    args = parser.parse_args()
+    if args.legacy_tk:
+        root = Tk()
+        MergerApp(root)
+        root.mainloop()
+        return
+    run_local_web_app(args.mode)
 
 
 if __name__ == "__main__":
