@@ -149,3 +149,8 @@ class VideoAudioMergerTests(TestCase):
 
         self.assertEqual(items[0], merger.DownloadItem("Song One", "https://www.youtube.com/watch?v=abc"))
         self.assertEqual(items[1], merger.DownloadItem("Song Two", "https://youtu.be/def"))
+
+    def test_pywebview_api_does_not_store_window_reference(self):
+        api = merger.PyWebViewApi()
+
+        self.assertNotIn("window", vars(api))

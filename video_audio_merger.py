@@ -1234,10 +1234,13 @@ class LocalWebHandler(BaseHTTPRequestHandler):
 
 
 class PyWebViewApi:
-    """Native file dialogs exposed to JavaScript through PyWebView."""
+    """Native file dialogs exposed to JavaScript through PyWebView.
 
-    def __init__(self) -> None:
-        self.window: Any = None
+    Keep this object free of PyWebView window references. PyWebView reflects
+    public API objects for JavaScript exposure; storing the native window on the
+    API object can make that reflection walk platform accessibility objects
+    recursively on Windows.
+    """
 
     def choose_videos(self) -> list[str]:
         return self._ask_open_filenames("Pilih video", VIDEO_EXTENSIONS)
@@ -1292,8 +1295,7 @@ def run_local_web_app(mode: str) -> None:
     except ImportError as exc:
         raise SystemExit("PyWebView belum terinstall. Jalankan: pip install pywebview") from exc
     api = PyWebViewApi()
-    window = webview.create_window(APP_TITLE, url, js_api=api, width=1100, height=760)
-    api.window = window
+    webview.create_window(APP_TITLE, url, js_api=api, width=1100, height=760)
     if mode == "development" and os.environ.get("ATK_OPEN_BROWSER") == "1":
         webbrowser.open(url)
     webview.start(debug=mode == "development")
