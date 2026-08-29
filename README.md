@@ -4,6 +4,19 @@ Repository ini menyediakan aplikasi berbasis **Web Lokal (Offline)** yang berjal
 
 Aplikasi tetap mempertahankan fungsi utama yang sudah ada: menggabungkan video/audio lokal memakai **FFmpeg** dan mengunduh antrian/playlist YouTube memakai **yt-dlp** bila tersedia.
 
+### Struktur Proyek
+
+Kode dipisahkan bertahap agar logika pemrosesan dapat dipelihara tanpa mengubah alur aplikasi yang sudah ada:
+
+- `video_audio_merger.py`: launcher aplikasi, server lokal, dan fallback UI Tkinter untuk kompatibilitas.
+- `atk/models.py`: model data bersama untuk media, download, dan pairing.
+- `atk/media/`: probe media, pembuatan command FFmpeg, serta aturan pairing per file.
+- `atk/downloads/`: pembuatan command dan parsing metadata `yt-dlp`.
+- `atk/web/static/`: `index.html`, `style.css`, dan `app.js` untuk UI web lokal.
+- `tests/`: test unit untuk logika media, pairing, dan integrasi kompatibilitas launcher.
+
+Pemindahan ini tidak mengubah endpoint, mode default, atau perintah menjalankan aplikasi, sehingga mode gabung media lama tetap berperilaku sama.
+
 ### Fitur
 
 - UI web lokal offline tanpa CDN atau aset internet eksternal.
@@ -11,6 +24,7 @@ Aplikasi tetap mempertahankan fungsi utama yang sudah ada: menggabungkan video/a
 - Tampilan desktop melalui PyWebView, tanpa address bar browser.
 - Mengelola daftar file video dan audio melalui list yang dapat ditambah, dipilih beberapa itemnya, dihapus, dan diacak urutannya.
 - Menggabungkan banyak video secara berurutan dan banyak audio secara berurutan menggunakan FFmpeg, termasuk opsi acak agar hasil setiap proses bisa berbeda.
+- Mode **Gabung per File** untuk memasangkan setiap video dengan audio pilihannya sendiri. Satu audio dapat digunakan ulang pada beberapa video, dan setiap pasangan menghasilkan file output terpisah.
 - Mode penyesuaian durasi:
   - **Durasi terpendek**: hasil berhenti saat audio atau video yang paling pendek selesai.
   - **Ikuti durasi video**: audio baru dipotong atau di-loop otomatis sampai durasi video cukup.
@@ -92,6 +106,15 @@ Setelah aplikasi terbuka, gunakan tab **Gabung Media** untuk menggabungkan file 
 7. Atur volume jika diperlukan.
 8. Klik **Gabungkan Sekarang** dan pantau progress bar/log sampai proses selesai.
 
+Untuk menggabungkan media satu per satu, gunakan tab **Gabung per File**:
+
+1. Tambahkan video dan audio melalui tab **Gabung Media** seperti biasa; daftar tersebut tetap digunakan juga oleh mode baru.
+2. Buka **Gabung per File**. Setiap video akan tampil sebagai satu baris pasangan.
+3. Pilih audio untuk setiap video. Audio yang sama dapat dipilih pada beberapa baris.
+4. Gunakan **Pasangkan Berdasarkan Urutan** untuk mengisi pasangan awal video 1 → audio 1, video 2 → audio 2, dan seterusnya; ubah pilihan mana pun secara manual bila diperlukan.
+5. Pilih **Folder Output**, atur durasi dan volume, lalu klik **Proses Semua Pasangan**.
+6. Aplikasi membuat satu file MP4 per video, menggunakan nama seperti `nama_video_gabung_audio.mp4`. Jika nama video berulang, nomor urut ditambahkan agar output tidak saling menimpa.
+
 Gunakan tab **Download YouTube** untuk mengunduh playlist:
 
 1. Tempel URL playlist YouTube pada kolom **URL Playlist**.
@@ -113,4 +136,4 @@ python video_audio_merger.py --legacy-tk
 
 ### Catatan Output
 
-Aplikasi memakai metode cepat dengan concat demuxer untuk banyak file, `-stream_loop` untuk looping audio/video, dan menyalin stream video (`-c:v copy`) pada semua mode, sehingga video tidak di-encode ulang. Hanya audio output yang di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Mode **Ikuti durasi video** akan me-loop audio bila audio lebih pendek, sedangkan mode **Ikuti durasi audio** akan me-loop video bila video lebih pendek. Agar mode super cepat tetap stabil, gunakan file video dalam urutan dengan codec/resolusi yang kompatibel. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
+Aplikasi memakai metode cepat dengan concat demuxer untuk banyak file, `-stream_loop` untuk looping audio/video, dan menyalin stream video (`-c:v copy`) pada semua mode, sehingga video tidak di-encode ulang. Hanya audio output yang di-encode ke `aac` 192 kbps agar kompatibel dengan banyak pemutar video. Mode **Ikuti durasi video** akan me-loop audio bila audio lebih pendek, sedangkan mode **Ikuti durasi audio** akan me-loop video bila video lebih pendek. Pada **Gabung per File**, pasangan diproses satu per satu—bukan banyak FFmpeg sekaligus—agar penggunaan CPU dan memori tetap ringan serta kegagalan satu pasangan tidak menghentikan pasangan berikutnya. Agar mode super cepat tetap stabil, gunakan file video dalam urutan dengan codec/resolusi yang kompatibel. Jika file output sudah ada, opsi **Timpa file output jika sudah ada** dapat dimatikan untuk mencegah overwrite.
