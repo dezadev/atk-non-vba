@@ -42,6 +42,25 @@ class DownloadItem:
     url: str
 
 
+@dataclass(frozen=True)
+class MediaPair:
+    """One independently rendered video and its optional replacement audio."""
+
+    video: Path
+    audio: Path | None = None
+
+
+@dataclass(frozen=True)
+class PairMergeJob:
+    """A prepared FFmpeg job for the per-file merge mode."""
+
+    video: Path
+    audio: Path
+    output: Path
+    command: list[str]
+    expected_duration: float | None
+
+
 def find_tool(name: str) -> str | None:
     """Return the executable path when a command exists in PATH."""
     return shutil.which(name)
@@ -131,6 +150,67 @@ def total_duration(paths: Sequence[Path]) -> float | None:
             return None
         total += duration
     return total
+
+
+def expected_pair_duration(video: Path, audio: Path, duration_mode: str) -> float | None:
+    """Return the expected duration for one pair, probing each input once."""
+    video_duration = probe_duration(video).duration
+    audio_duration = probe_duration(audio).duration
+    if duration_mode == "video":
+        return video_duration
+    if duration_mode == "audio":
+        return audio_duration
+    if video_duration is None or audio_duration is None:
+        return None
+    return min(video_duration, audio_duration)
+
+
+def pair_output_paths(pairs: Sequence[MediaPair], output_dir: Path) -> list[Path]:
+    """Create deterministic, non-colliding output names based on each video."""
+    used_names: set[str] = set()
+    outputs: list[Path] = []
+    for pair in pairs:
+        base_name = f"{pair.video.stem}_gabung_audio"
+        candidate = f"{base_name}.mp4"
+        number = 2
+        while candidate.casefold() in used_names:
+            candidate = f"{base_name}_{number}.mp4"
+            number += 1
+        used_names.add(candidate.casefold())
+        outputs.append(output_dir / candidate)
+    return outputs
+
+
+def build_pair_ffmpeg_command(
+    ffmpeg: str,
+    pair: MediaPair,
+    output: Path,
+    duration_mode: str,
+    video_volume: int,
+    audio_volume: int,
+    overwrite: bool,
+) -> tuple[list[str], float | None]:
+    """Build the fast stream-copy FFmpeg command for a single media pair."""
+    if pair.audio is None:
+        raise ValueError(f"Audio untuk {display_media_name(pair.video)} belum dipilih.")
+    command = [ffmpeg, "-y" if overwrite else "-n"]
+    command.extend(build_looped_input_args(pair.video, pair.audio, duration_mode))
+    video_gain = video_volume / 100
+    audio_gain = audio_volume / 100
+    filters: list[str] = []
+    audio_inputs: list[str] = []
+    if video_gain > 0:
+        filters.append(f"[0:a]volume={video_gain:.2f}[vold]")
+        audio_inputs.append("[vold]")
+    filters.append(f"[1:a]volume={audio_gain:.2f}[anew]")
+    audio_inputs.append("[anew]")
+    filters.append(f"{''.join(audio_inputs)}amix=inputs={len(audio_inputs)}:duration=longest:dropout_transition=0[aout]")
+    command.extend([
+        "-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]",
+        "-progress", "pipe:1", "-nostats", "-shortest", "-c:v", "copy", "-c:a", "aac",
+        "-b:a", "192k", "-movflags", "+faststart", str(output),
+    ])
+    return command, expected_pair_duration(pair.video, pair.audio, duration_mode)
 
 
 def display_media_name(path: str | Path) -> str:
@@ -228,7 +308,7 @@ WEB_INDEX_HTML = """<!doctype html>
 </head>
 <body><main class="app">
   <section class="hero"><h1>Toolkit Video & Audio</h1><p>Aplikasi web lokal offline untuk FFmpeg dan yt-dlp. Server berjalan di komputer ini dan ditampilkan melalui PyWebView.</p><p id="mode" class="muted"></p></section>
-  <nav class="tabs"><button class="tab active" data-tab="merge">Gabung Media</button><button class="tab" data-tab="download">Download YouTube</button></nav>
+  <nav class="tabs"><button class="tab active" data-tab="merge">Gabung Media</button><button class="tab" data-tab="pair">Gabung per File</button><button class="tab" data-tab="download">Download YouTube</button></nav>
   <section id="merge" class="panel active">
     <div class="grid"><div class="card"><h3>Daftar Video</h3><div id="videos" class="list"></div><div class="row"><button onclick="chooseVideos()">Tambah</button><button onclick="removeSelected('videos')">Hapus Terpilih</button><button onclick="shuffleList('videos')">Acak</button></div></div>
     <div class="card"><h3>Daftar Audio</h3><div id="audios" class="list"></div><div class="row"><button onclick="chooseAudios()">Tambah</button><button onclick="removeSelected('audios')">Hapus Terpilih</button><button onclick="shuffleList('audios')">Acak</button></div></div></div>
@@ -238,6 +318,7 @@ WEB_INDEX_HTML = """<!doctype html>
       <div class="card"><h3>Aksi</h3><div class="actions"><button class="primary" onclick="startMerge()">Gabungkan Sekarang</button><button onclick="shuffleAll()">Acak Semua</button></div></div>
     </div>
   </section>
+  <section id="pair" class="panel"><div class="card"><h2>Gabung per File</h2><p class="muted">Setiap video dibuat menjadi satu file output. Pilih audio untuk setiap video; satu audio dapat digunakan berulang kali.</p><div class="row"><button onclick="pairByOrder()">Pasangkan Berdasarkan Urutan</button><button class="danger" onclick="clearPairs()">Kosongkan Semua Pasangan</button></div><div id="pairs" class="list"></div></div><div class="merge-options"><div class="card"><h3>Folder Output</h3><div class="row"><input id="pairOutputDir" class="grow" type="text"><button onclick="choosePairOutputDir()">Pilih...</button></div><label><input id="pairOverwrite" type="checkbox" checked> Timpa file output jika sudah ada</label></div><div class="card"><h3>Penyesuaian durasi</h3><div class="options"><label><input type="radio" name="pairDuration" value="shortest" checked> Selesai di durasi terpendek</label><label><input type="radio" name="pairDuration" value="video"> Ikuti durasi video</label><label><input type="radio" name="pairDuration" value="audio"> Ikuti durasi audio</label></div><div class="grid"><label>Audio asli video <input id="pairVideoVolume" type="range" min="0" max="100" value="0"></label><label>Audio baru <input id="pairAudioVolume" type="range" min="0" max="150" value="100"></label></div></div><div class="card"><h3>Aksi</h3><div class="actions"><button class="primary" onclick="startPairMerge()">Proses Semua Pasangan</button></div></div></div></section>
   <section id="download" class="panel"><div class="card"><div class="row"><label>URL Playlist</label><input id="playlistUrl" class="grow" type="text"><button onclick="loadPlaylist()">Muat Playlist</button><button onclick="addUrl()">Tambah URL</button></div><div class="row"><label>Folder</label><input id="downloadDir" class="grow" type="text"><button onclick="chooseDownloadDir()">Pilih...</button></div><div class="row"><label><input type="radio" name="format" value="video" checked> Video MP4 terbaik</label><label><input type="radio" name="format" value="audio"> Audio MP3 saja</label></div></div><div class="grid"><div class="card"><h3>Antrian Download</h3><div id="queue" class="list"></div><button onclick="removeSelected('queue')">Hapus Terpilih</button></div><div class="card"><h3>Sudah Terdownload</h3><div id="done" class="list"></div></div></div><div class="row"><button class="primary" onclick="startDownload()">Download Antrian</button></div></section>
   <section class="status"><div class="bar"><div id="progress" class="fill"></div></div><p id="status">Memuat aplikasi...</p><div id="log" class="log"></div></section>
 </main><script src="/app.js"></script></body></html>"""
@@ -249,14 +330,18 @@ async function api(path, data){const r=await fetch('/api/'+path,{method:'POST',h
 async function refresh(){const r=await fetch('/api/state'); state=await r.json(); render();}
 function fileName(value){return String(value).split(/[\\/]/).pop();}
 function renderList(id, values){const box=document.getElementById(id); box.innerHTML=''; values.forEach((v,i)=>{const d=document.createElement('div'); d.className='item '+(selected[id]?.has(i)?'selected':''); const text=(id==='videos'||id==='audios')?fileName(v):(v.title||v); d.textContent=(i+1)+'. '+text; d.title=(v.title||v); d.onclick=()=>{selected[id].has(i)?selected[id].delete(i):selected[id].add(i); render();}; box.appendChild(d);});}
-function render(){document.getElementById('mode').textContent='Mode: '+state.mode; renderList('videos',state.video_files); renderList('audios',state.audio_files); renderList('queue',state.download_queue_items); renderList('done',state.downloaded_items); document.getElementById('downloadDir').value=state.download_dir||''; const out=document.getElementById('output'); if(document.activeElement!==out) out.value=state.output_path||out.value; document.getElementById('status').textContent=state.status||''; document.getElementById('progress').style.width=(state.progress||0)+'%'; document.getElementById('log').textContent=(state.log||[]).join('\n'); document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;}
+function renderPairs(){const box=document.getElementById('pairs'); box.innerHTML=''; const audios=state.audio_files||[]; (state.media_pairs||[]).forEach((pair,index)=>{const row=document.createElement('div'); row.className='item'; const label=document.createElement('span'); label.textContent=(index+1)+'. '+fileName(pair.video)+' → '; const select=document.createElement('select'); const empty=document.createElement('option'); empty.value=''; empty.textContent='Pilih audio...'; select.appendChild(empty); audios.forEach(audio=>{const option=document.createElement('option'); option.value=audio; option.textContent=fileName(audio); option.selected=audio===pair.audio; select.appendChild(option);}); select.onchange=()=>api('set_pair',{index,audio:select.value||null}); row.append(label,select); box.appendChild(row);}); if(!state.media_pairs?.length) box.textContent='Tambahkan video pada tab Gabung Media untuk membuat daftar pasangan.';}
+function render(){document.getElementById('mode').textContent='Mode: '+state.mode; renderList('videos',state.video_files); renderList('audios',state.audio_files); renderList('queue',state.download_queue_items); renderList('done',state.downloaded_items); renderPairs(); document.getElementById('downloadDir').value=state.download_dir||''; const pairOut=document.getElementById('pairOutputDir'); if(document.activeElement!==pairOut) pairOut.value=state.pair_output_dir||pairOut.value; const out=document.getElementById('output'); if(document.activeElement!==out) out.value=state.output_path||out.value; document.getElementById('status').textContent=state.status||''; document.getElementById('progress').style.width=(state.progress||0)+'%'; document.getElementById('log').textContent=(state.log||[]).join('\n'); document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;}
 async function chooseVideos(){const paths=await window.pywebview.api.choose_videos(); if(paths?.length) await api('add_media',{kind:'video',paths});}
 async function chooseAudios(){const paths=await window.pywebview.api.choose_audios(); if(paths?.length) await api('add_media',{kind:'audio',paths});}
 async function chooseOutput(){const path=await window.pywebview.api.choose_output(); if(path) document.getElementById('output').value=path;}
 async function chooseDownloadDir(){const path=await window.pywebview.api.choose_download_dir(); if(path) await api('set_download_dir',{path});}
+async function choosePairOutputDir(){const path=await window.pywebview.api.choose_output_dir(); if(path) await api('set_pair_output_dir',{path});}
 function removeSelected(kind){api('remove',{kind,indices:[...selected[kind]]}); selected[kind].clear();}
 function shuffleList(kind){api('shuffle',{kind});} function shuffleAll(){api('shuffle',{kind:'all'});} function val(n){return document.querySelector('input[name='+n+']:checked').value;}
 function startMerge(){api('merge',{output:document.getElementById('output').value,duration_mode:val('duration'),video_volume:+document.getElementById('videoVolume').value,audio_volume:+document.getElementById('audioVolume').value,overwrite:document.getElementById('overwrite').checked});}
+function pairByOrder(){api('pair_by_order');} function clearPairs(){api('clear_pairs');}
+function startPairMerge(){api('pair_merge',{output_dir:document.getElementById('pairOutputDir').value,duration_mode:val('pairDuration'),video_volume:+document.getElementById('pairVideoVolume').value,audio_volume:+document.getElementById('pairAudioVolume').value,overwrite:document.getElementById('pairOverwrite').checked});}
 function addUrl(){api('add_url',{url:document.getElementById('playlistUrl').value}); document.getElementById('playlistUrl').value='';}
 function loadPlaylist(){api('load_playlist',{url:document.getElementById('playlistUrl').value});}
 function startDownload(){api('download',{url:document.getElementById('playlistUrl').value,media_format:val('format')});}
@@ -974,6 +1059,7 @@ class WebMergerApp:
         self.mode = mode
         self.video_files: list[Path] = []
         self.audio_files: list[Path] = []
+        self.media_pairs: list[MediaPair] = []
         self.download_queue_items: list[DownloadItem] = []
         self.downloaded_items: list[DownloadItem] = []
         self.output_path = SimpleVar("")
@@ -984,6 +1070,7 @@ class WebMergerApp:
         self.video_volume = SimpleVar(0)
         self.audio_volume = SimpleVar(100)
         self.overwrite = SimpleVar(True)
+        self.pair_output_dir = SimpleVar(str(Path.home()))
         self.status = "Pilih file video dan audio untuk mulai."
         self.progress = 0.0
         self.logs: list[str] = []
@@ -1002,10 +1089,15 @@ class WebMergerApp:
                 "mode": self.mode,
                 "video_files": [str(path) for path in self.video_files],
                 "audio_files": [str(path) for path in self.audio_files],
+                "media_pairs": [
+                    {"video": str(pair.video), "audio": str(pair.audio) if pair.audio else None}
+                    for pair in self.media_pairs
+                ],
                 "download_queue_items": [item.__dict__ for item in self.download_queue_items],
                 "downloaded_items": [item.__dict__ for item in self.downloaded_items],
                 "download_dir": self.download_dir.get(),
                 "output_path": self.output_path.get(),
+                "pair_output_dir": self.pair_output_dir.get(),
                 "status": self.status,
                 "progress": self.progress,
                 "log": self.logs[-250:],
@@ -1016,6 +1108,7 @@ class WebMergerApp:
         with self.lock:
             if kind == "video":
                 self.video_files.extend(files)
+                self.media_pairs.extend(MediaPair(video=file) for file in files)
                 if not self.output_path.get() and self.video_files:
                     video = self.video_files[0]
                     self.output_path.set(str(video.with_name(f"{video.stem}_gabung_audio.mp4")))
@@ -1030,8 +1123,13 @@ class WebMergerApp:
         with self.lock:
             if kind == "videos":
                 self.video_files = [path for index, path in enumerate(self.video_files) if index not in selected]
+                self.media_pairs = [pair for index, pair in enumerate(self.media_pairs) if index not in selected]
             elif kind == "audios":
+                removed = {path for index, path in enumerate(self.audio_files) if index in selected}
                 self.audio_files = [path for index, path in enumerate(self.audio_files) if index not in selected]
+                self.media_pairs = [
+                    MediaPair(pair.video, None) if pair.audio in removed else pair for pair in self.media_pairs
+                ]
             elif kind == "queue":
                 self.download_queue_items = [item for index, item in enumerate(self.download_queue_items) if index not in selected]
             else:
@@ -1040,10 +1138,69 @@ class WebMergerApp:
     def shuffle(self, kind: str) -> None:
         with self.lock:
             if kind in ("videos", "all"):
-                random.shuffle(self.video_files)
+                random.shuffle(self.media_pairs)
+                self.video_files = [pair.video for pair in self.media_pairs]
             if kind in ("audios", "all"):
                 random.shuffle(self.audio_files)
         self._add_log("Urutan media diacak.")
+
+    def pair_by_order(self) -> None:
+        with self.lock:
+            self.media_pairs = [
+                MediaPair(video, self.audio_files[index] if index < len(self.audio_files) else None)
+                for index, video in enumerate(self.video_files)
+            ]
+        self._add_log("Video dan audio dipasangkan berdasarkan urutan.")
+
+    def set_pair(self, index: int, audio: str | None) -> None:
+        with self.lock:
+            if not 0 <= index < len(self.media_pairs):
+                raise ValueError("Pasangan video tidak ditemukan.")
+            audio_path = Path(audio) if audio else None
+            if audio_path is not None and audio_path not in self.audio_files:
+                raise ValueError("Audio yang dipilih tidak ada di daftar audio.")
+            current = self.media_pairs[index]
+            self.media_pairs[index] = MediaPair(current.video, audio_path)
+
+    def clear_pairs(self) -> None:
+        with self.lock:
+            self.media_pairs = [MediaPair(video) for video in self.video_files]
+        self._add_log("Semua pasangan audio dikosongkan.")
+
+    def start_pair_merge(self, data: dict[str, Any]) -> None:
+        output_dir = Path(str(data.get("output_dir", ""))).expanduser()
+        if not output_dir.is_dir():
+            raise ValueError("Folder output pasangan belum dipilih atau tidak ditemukan.")
+        duration_mode = str(data.get("duration_mode", "shortest"))
+        if duration_mode not in {"shortest", "video", "audio"}:
+            raise ValueError("Mode durasi tidak valid.")
+        video_volume = int(data.get("video_volume", 0))
+        audio_volume = int(data.get("audio_volume", 100))
+        if not 0 <= video_volume <= 100 or not 0 <= audio_volume <= 150:
+            raise ValueError("Nilai volume tidak valid.")
+        ffmpeg = find_tool("ffmpeg")
+        if not ffmpeg:
+            raise ValueError("FFmpeg tidak ditemukan di PATH.")
+        with self.lock:
+            pairs = list(self.media_pairs)
+        if not pairs:
+            raise ValueError("Belum ada video untuk dipasangkan.")
+        if any(pair.audio is None for pair in pairs):
+            raise ValueError("Semua video harus memiliki audio sebelum diproses.")
+        if any(not pair.video.is_file() or pair.audio is None or not pair.audio.is_file() for pair in pairs):
+            raise ValueError("Ada file video atau audio pasangan yang tidak ditemukan.")
+        outputs = pair_output_paths(pairs, output_dir.resolve())
+        jobs = [
+            PairMergeJob(pair.video, pair.audio, output, *build_pair_ffmpeg_command(
+                ffmpeg, pair, output, duration_mode, video_volume, audio_volume, bool(data.get("overwrite", True))
+            ))
+            for pair, output in zip(pairs, outputs, strict=True)
+        ]
+        self.pair_output_dir.set(str(output_dir))
+        self.progress = 0
+        self.status = f"Memproses {len(jobs)} pasangan secara berurutan... jangan tutup aplikasi."
+        self._add_log("Memulai proses gabung per file secara berurutan agar penggunaan CPU tetap ringan.")
+        threading.Thread(target=self._run_pair_merges, args=(jobs,), daemon=True).start()
 
     def add_url(self, url: str) -> None:
         clean_url = url.strip()
@@ -1107,6 +1264,58 @@ class WebMergerApp:
             MergerApp._run_merge(self, command, expected_duration, cleanup_paths)
         except Exception as exc:
             self._fail(str(exc))
+
+    def _run_pair_merges(self, jobs: Sequence[PairMergeJob]) -> None:
+        """Run one FFmpeg process at a time to keep batch resource usage predictable."""
+        succeeded = 0
+        failed: list[str] = []
+        total = len(jobs)
+        for index, job in enumerate(jobs, start=1):
+            self.status = f"Memproses pasangan {index}/{total}: {job.video.name}"
+            self._add_log(f"[{index}/{total}] {job.video.name} + {job.audio.name}")
+            if self._run_pair_merge_job(job, index, total):
+                succeeded += 1
+            else:
+                failed.append(job.video.name)
+        self._set_progress(100)
+        if failed:
+            self.status = f"Selesai: {succeeded}/{total} pasangan berhasil. Gagal: {', '.join(failed)}."
+        else:
+            self.status = f"Berhasil membuat {succeeded} file output."
+        self._add_log(self.status)
+
+    def _run_pair_merge_job(self, job: PairMergeJob, index: int, total: int) -> bool:
+        startupinfo = None
+        if hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        output_lines: list[str] = []
+        try:
+            process = subprocess.Popen(
+                job.command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, startupinfo=startupinfo
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                stripped = line.strip()
+                if stripped.startswith("out_time_ms=") and job.expected_duration and job.expected_duration > 0:
+                    try:
+                        item_progress = min(99.0, int(stripped.split("=", 1)[1]) / 1_000_000 / job.expected_duration * 100)
+                        self._set_progress(((index - 1) + item_progress / 100) / total * 100)
+                    except ValueError:
+                        pass
+                elif stripped and not stripped.startswith(("frame=", "fps=", "progress=")):
+                    output_lines.append(stripped)
+            return_code = process.wait()
+        except OSError as exc:
+            self._add_log(f"Gagal menjalankan {job.video.name}: {exc}")
+            return False
+        if return_code == 0:
+            self._set_progress(index / total * 100)
+            self._add_log(f"Selesai: {job.output.name}")
+            return True
+        error = output_lines[-1] if output_lines else "FFmpeg gagal tanpa pesan."
+        self._add_log(f"Gagal {job.video.name}: {error}")
+        return False
 
     def _run_playlist_downloads(self, commands: Sequence[tuple[DownloadItem, list[str]]]) -> None:
         for item, command in commands:
@@ -1214,14 +1423,24 @@ class LocalWebHandler(BaseHTTPRequestHandler):
             app.remove(str(data.get("kind", "")), [int(i) for i in data.get("indices", [])])
         elif path == "/api/shuffle":
             app.shuffle(str(data.get("kind", "")))
+        elif path == "/api/pair_by_order":
+            app.pair_by_order()
+        elif path == "/api/set_pair":
+            app.set_pair(int(data.get("index", -1)), data.get("audio"))
+        elif path == "/api/clear_pairs":
+            app.clear_pairs()
         elif path == "/api/add_url":
             app.add_url(str(data.get("url", "")))
         elif path == "/api/load_playlist":
             app.load_playlist(str(data.get("url", "")))
         elif path == "/api/set_download_dir":
             app.download_dir.set(str(data.get("path", "")))
+        elif path == "/api/set_pair_output_dir":
+            app.pair_output_dir.set(str(data.get("path", "")))
         elif path == "/api/merge":
             app.start_merge(data)
+        elif path == "/api/pair_merge":
+            app.start_pair_merge(data)
         elif path == "/api/download":
             app.start_download(str(data.get("url", "")), str(data.get("media_format", "video")))
         else:
@@ -1272,6 +1491,13 @@ class PyWebViewApi:
         root = self._dialog_root()
         try:
             return filedialog.askdirectory(parent=root, title="Pilih folder download")
+        finally:
+            root.destroy()
+
+    def choose_output_dir(self) -> str:
+        root = self._dialog_root()
+        try:
+            return filedialog.askdirectory(parent=root, title="Pilih folder output pasangan")
         finally:
             root.destroy()
 
