@@ -4,6 +4,19 @@ Repository ini menyediakan aplikasi berbasis **Web Lokal (Offline)** yang berjal
 
 Aplikasi tetap mempertahankan fungsi utama yang sudah ada: menggabungkan video/audio lokal memakai **FFmpeg** dan mengunduh antrian/playlist YouTube memakai **yt-dlp** bila tersedia.
 
+### Struktur Proyek
+
+Kode dipisahkan bertahap agar logika pemrosesan dapat dipelihara tanpa mengubah alur aplikasi yang sudah ada:
+
+- `video_audio_merger.py`: launcher aplikasi, server lokal, dan fallback UI Tkinter untuk kompatibilitas.
+- `atk/models.py`: model data bersama untuk media, download, dan pairing.
+- `atk/media/`: probe media, pembuatan command FFmpeg, serta aturan pairing per file.
+- `atk/downloads/`: pembuatan command dan parsing metadata `yt-dlp`.
+- `atk/web/static/`: `index.html`, `style.css`, dan `app.js` untuk UI web lokal.
+- `tests/`: test unit untuk logika media, pairing, dan integrasi kompatibilitas launcher.
+
+Pemindahan ini tidak mengubah endpoint, mode default, atau perintah menjalankan aplikasi, sehingga mode gabung media lama tetap berperilaku sama.
+
 ### Fitur
 
 - UI web lokal offline tanpa CDN atau aset internet eksternal.

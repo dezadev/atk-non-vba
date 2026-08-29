@@ -159,6 +159,13 @@ class VideoAudioMergerTests(TestCase):
 
         self.assertNotIn("window", vars(api))
 
+    def test_web_assets_are_loaded_from_static_files(self):
+        from atk.web.assets import load_asset
+
+        self.assertEqual(merger.WEB_INDEX_HTML, load_asset("index.html"))
+        self.assertEqual(merger.WEB_APP_JS, load_asset("app.js"))
+        self.assertIn('/static/style.css', merger.WEB_INDEX_HTML)
+
     def test_pair_output_paths_use_video_names_and_avoid_collisions(self):
         pairs = [
             merger.MediaPair(Path("first.mp4"), Path("music.mp3")),
@@ -175,7 +182,7 @@ class VideoAudioMergerTests(TestCase):
     def test_build_pair_ffmpeg_command_keeps_video_stream_copy_and_loops_audio(self):
         pair = merger.MediaPair(Path("video.mp4"), Path("audio.mp3"))
 
-        with patch.object(merger, "expected_pair_duration", return_value=42.0):
+        with patch("atk.media.pairing.expected_pair_duration", return_value=42.0):
             command, duration = merger.build_pair_ffmpeg_command(
                 "ffmpeg", pair, Path("output.mp4"), "video", 0, 100, True
             )
