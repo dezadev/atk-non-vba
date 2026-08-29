@@ -158,3 +158,47 @@ class VideoAudioMergerTests(TestCase):
         api = merger.PyWebViewApi()
 
         self.assertNotIn("window", vars(api))
+
+    def test_pair_output_paths_use_video_names_and_avoid_collisions(self):
+        pairs = [
+            merger.MediaPair(Path("first.mp4"), Path("music.mp3")),
+            merger.MediaPair(Path("first.mp4"), Path("music.mp3")),
+        ]
+
+        outputs = merger.pair_output_paths(pairs, Path("output"))
+
+        self.assertEqual(outputs, [
+            Path("output/first_gabung_audio.mp4"),
+            Path("output/first_gabung_audio_2.mp4"),
+        ])
+
+    def test_build_pair_ffmpeg_command_keeps_video_stream_copy_and_loops_audio(self):
+        pair = merger.MediaPair(Path("video.mp4"), Path("audio.mp3"))
+
+        with patch.object(merger, "expected_pair_duration", return_value=42.0):
+            command, duration = merger.build_pair_ffmpeg_command(
+                "ffmpeg", pair, Path("output.mp4"), "video", 0, 100, True
+            )
+
+        self.assertEqual(duration, 42.0)
+        self.assertEqual(command[:6], ["ffmpeg", "-y", "-i", "video.mp4", "-stream_loop", "-1"])
+        self.assertIn("-c:v", command)
+        self.assertEqual(command[command.index("-c:v") + 1], "copy")
+        self.assertEqual(command[-1], "output.mp4")
+
+    def test_web_pairing_by_order_allows_audio_reuse(self):
+        app = merger.WebMergerApp("production")
+        app.video_files = [Path("one.mp4"), Path("two.mp4"), Path("three.mp4")]
+        app.audio_files = [Path("music.mp3"), Path("voice.mp3")]
+
+        app.pair_by_order()
+        app.set_pair(2, "music.mp3")
+
+        self.assertEqual(
+            app.media_pairs,
+            [
+                merger.MediaPair(Path("one.mp4"), Path("music.mp3")),
+                merger.MediaPair(Path("two.mp4"), Path("voice.mp3")),
+                merger.MediaPair(Path("three.mp4"), Path("music.mp3")),
+            ],
+        )
