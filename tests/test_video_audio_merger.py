@@ -186,6 +186,12 @@ class VideoAudioMergerTests(TestCase):
         self.assertEqual(command[command.index("-c:v") + 1], "copy")
         self.assertEqual(command[-1], "output.mp4")
 
+    def test_pairing_dropdown_is_not_rebuilt_while_open(self):
+        self.assertIn(
+            "document.activeElement?.matches('#pairs select')",
+            merger.WEB_APP_JS,
+        )
+
     def test_web_pairing_by_order_allows_audio_reuse(self):
         app = merger.WebMergerApp("production")
         app.video_files = [Path("one.mp4"), Path("two.mp4"), Path("three.mp4")]
